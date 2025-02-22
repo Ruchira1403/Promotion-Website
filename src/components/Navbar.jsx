@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom'; 
-import Logo from '../assets/Products/logo.png'; 
+import { Link } from 'react-router-dom';
+import Logo from '../assets/Products/logo.png';
 
 const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -10,46 +10,82 @@ const Navbar = () => {
   };
 
   return (
-    <nav className="bg-white shadow-lg fixed w-full z-10 top-0">
-      <div className="container mx-auto flex justify-between items-center p-4">
-        {/* Logo */}
-        <Link to="/">
-          <img src={Logo} alt="Wishwa Products Logo" className="h-12" />
-        </Link>
+    <nav className="w-full fixed z-10 top-0 bg-gradient-to-r from-green-600 via-green-500 to-green-400 shadow-xl">
+      <div className="container mx-auto max-w-7xl px-6">
+        <div className="flex justify-between items-center py-4">
+          {/* Logo */}
+          <Link to="/" className="transform transition-transform duration-300 hover:scale-110">
+            <img src={Logo} alt="Wishwa Products Logo" className="h-16 w-auto" />
+          </Link>
 
-        {/* Menu */}
-        <div className="hidden md:flex space-x-8">
-          <Link to="/" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">HOME</Link>
-          <Link to="/aboutus" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">ABOUT US</Link>
-          <Link to="/products" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">PRODUCTS</Link>
-          <Link to="/gallery" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">GALLERY</Link>
-          <Link to="/contactus" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">CONTACT US</Link>
-          <Link to="/careers" className="text-gray-700 hover:text-blue-600 transition-colors duration-300">CAREERS</Link>
+          {/* Desktop Menu */}
+          <div className="hidden md:flex space-x-8">
+            {[
+              { path: "/", text: "HOME" },
+              { path: "/aboutus", text: "ABOUT US" },
+              { path: "/products", text: "PRODUCTS" },
+              { path: "/gallery", text: "GALLERY" },
+              { path: "/contactus", text: "CONTACT US" },
+              { path: "/careers", text: "CAREERS" }
+            ].map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                className="relative text-white font-semibold tracking-wide py-2 px-4 transition-all duration-300 hover:text-green-100 group"
+              >
+                {item.text}
+                <span className="absolute bottom-0 left-0 w-full h-0.5 bg-white transform scale-x-0 transition-transform duration-300 group-hover:scale-x-100"></span>
+              </Link>
+            ))}
+          </div>
+
+          {/* Mobile Menu Button */}
+          <div className="md:hidden">
+            <button
+              onClick={toggleMenu}
+              className="text-white hover:text-green-100 transition-colors duration-300 focus:outline-none"
+            >
+              <svg
+                className="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M4 6h16M4 12h16M4 18h16"
+                ></path>
+              </svg>
+            </button>
+          </div>
         </div>
 
-        {/* Mobile Menu Button */}
-        <div className="md:hidden">
-          <button onClick={toggleMenu} className="text-gray-700 focus:outline-none">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path>
-            </svg>
-          </button>
-        </div>
+        {/* Mobile Menu */}
+        {isMenuOpen && (
+          <div className="md:hidden bg-white rounded-b-lg shadow-lg overflow-hidden">
+            {[
+              { path: "/", text: "HOME" },
+              { path: "/aboutus", text: "ABOUT US" },
+              { path: "/products", text: "PRODUCTS" },
+              { path: "/gallery", text: "GALLERY" },
+              { path: "/contactus", text: "CONTACT US" },
+              { path: "/careers", text: "CAREERS" }
+            ].map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                className="block py-3 px-6 text-gray-700 hover:bg-green-50 hover:text-green-600 transition-colors duration-300 border-b border-gray-100 last:border-none"
+              >
+                {item.text}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
-
-      {/* Mobile Menu */}
-      {isMenuOpen && (
-        <div className="md:hidden bg-white">
-          <Link to="/" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">HOME</Link>
-          <Link to="/aboutus" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">ABOUT US</Link>
-          <Link to="/products" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">PRODUCTS</Link>
-          <Link to="/gallery" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">GALLERY</Link>
-          <Link to="/contactus" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">CONTACT US</Link>
-          <Link to="/careers" className="block py-2 px-4 text-gray-700 hover:bg-gray-100">CAREERS</Link>
-        </div>
-      )}
     </nav>
-    
   );
 };
 
