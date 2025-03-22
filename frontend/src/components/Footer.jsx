@@ -15,7 +15,7 @@ const Footer = () => {
           <h3 className="font-bold text-lg mb-4">Wishwa Product (PVT) LTD.</h3>
           <p className="flex items-center justify-center mb-2">
             <FaMapMarkerAlt className="mr-2" />
-            No. 645, Colombo Road, Ranwala, Kegalle, 71000, Sri Lanka.
+            No. 145, 2nd Street, Jayawardhanapura,Ampara, Sri Lanka 
           </p>
           <p className="flex items-center justify-center mb-2">
             <FaPhoneAlt className="mr-2" />
@@ -27,7 +27,7 @@ const Footer = () => {
           </p>
           <p className="flex items-center justify-center mb-4">
             <FaEnvelope className="mr-2" />
-            Email: <a href="mailto:islanddairies.info@gmail.com" className="underline">islanddairies.info@gmail.com</a>
+            Email: <a href="mailto:islanddairies.info@gmail.com" className="underline">galoyawishwa.info@gmail.com</a>
           </p>
         </div>
 

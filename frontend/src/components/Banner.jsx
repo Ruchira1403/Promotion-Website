@@ -6,6 +6,7 @@ import Img1 from '../assets/banner.jpg'; // Replace with your image paths
 import Img2 from '../assets/banner2.jpg';
 import Img3 from '../assets/banner3.jpg';
 import Img4 from '../assets/banner4.jpg';
+import Img5 from '../assets/banner5.jpg';
 
 const Banner = () => {
   // Settings for the carousel
@@ -31,7 +32,7 @@ const Banner = () => {
       buttonText: 'VIEW ALL PRODUCTS',
     },
     {
-      image: Img2,
+      image: Img5,
       title: 'Premium Quality Dairy Products',
       description:
         'Experience the richness of our premium dairy products, crafted with care and tradition for your health and happiness.',
