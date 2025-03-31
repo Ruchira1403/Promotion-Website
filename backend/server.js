@@ -1,6 +1,5 @@
 import express from "express";
 import "dotenv/config";
-import mongoose from "mongoose";
 import cors from "cors";
 import connectDB from "./config/mongodb.js";
 import authRoutes from "./routes/auth.js";
@@ -9,19 +8,25 @@ import authRoutes from "./routes/auth.js";
 const app = express();
 const port = process.env.PORT || 4000;
 
-// Connect to MongoDB
-connectDB();
-
-// Middlewares
-app.use(cors());
+// Middleware
 app.use(express.json());
-
-// API endpoints
-app.get("/", (req, res) => {
-  res.send("API working");
-});
+app.use(cors());
 
 // Routes
-app.use("/api/auth", authRoutes);
+app.use('/api/auth', authRoutes);
 
-app.listen(port, () => console.log("Server started on PORT: " + port));
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
+// Export app before connecting to DB
+export default app;
+
+// Connect to MongoDB and start server only if this file is run directly
+if (process.env.NODE_ENV !== 'test') {
+    connectDB();
+    app.listen(port, () => {
+        console.log(`Server started on PORT: ${port}`);
+    });
+}

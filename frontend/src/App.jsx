@@ -1,6 +1,7 @@
 import React from "react";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import Layout from "./components/Layout";
+import Home from "./components/Home";
 import Aboutus from "./components/Pages/Aboutus";
 import ProductsDetails from "./components/Pages/ProductsDetails";
 import Gallery from "./components/Pages/Gallery";
@@ -18,7 +19,7 @@ import { AuthProvider } from "./context/AuthContext";
 import "./App.css";
 
 // Define the Home component
-const Home = () => (
+const HomeComponent = () => (
   <>
     <Banner />
     <AboutUs />
@@ -45,8 +46,8 @@ const router = createBrowserRouter(
       element: <Layout />,
       children: [
         {
-          index: true,
-          element: <Home />,
+          path: "/",
+          element: <HomeComponent />,
         },
         {
           path: "aboutus",
@@ -103,12 +104,12 @@ const router = createBrowserRouter(
   }
 );
 
-function App() {
+const App = () => {
   return (
     <AuthProvider>
       <RouterProvider router={router} />
     </AuthProvider>
   );
-}
+};
 
 export default App;
