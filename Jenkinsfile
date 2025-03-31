@@ -8,17 +8,6 @@ pipeline {
     }
     
     stages {
-        stage('Check Docker Installation') {
-            steps {
-                script {
-                    def dockerExists = bat(script: 'where docker', returnStatus: true)
-                    if (dockerExists != 0) {
-                        error "Docker is not installed or not in PATH. Please install Docker on the Jenkins server."
-                    }
-                }
-            }
-        }
-        
         stage('Clone Repository') {
             steps {
                 git branch: 'main',
@@ -57,12 +46,7 @@ pipeline {
     
     post {
         always {
-            script {
-                def dockerExists = bat(script: 'where docker', returnStatus: true)
-                if (dockerExists == 0) {
-                    bat 'docker logout'
-                }
-            }
+            bat 'docker logout'
             cleanWs()
         }
     }
