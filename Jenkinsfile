@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
-        DOCKER_IMAGE_NAME = "usudarasubodhitha"  // replace with your Docker Hub username
+        DOCKER_IMAGE_NAME = "udara397"  // your Docker Hub username
         DOCKER_IMAGE_TAG = "latest"
     }
     
@@ -11,15 +11,15 @@ pipeline {
         stage('Clone Repository') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/usudarasubodhitha/dairy-promotion-website.git'  // replace with your GitHub repo URL
+                    url: 'https://github.com/udaraDev/Promotion-Website.git'
             }
         }
         
         stage('Build Docker Images') {
             steps {
                 script {
-                    bat "docker build -t ${DOCKER_IMAGE_NAME.toLowerCase()}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend"
-                    bat "docker build -t ${DOCKER_IMAGE_NAME.toLowerCase()}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend"
+                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend"
+                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend"
                 }
             }
         }
@@ -37,8 +37,8 @@ pipeline {
         stage('Push Images to DockerHub') {
             steps {
                 script {
-                    bat "docker push ${DOCKER_IMAGE_NAME.toLowerCase()}/dairy-backend:${DOCKER_IMAGE_TAG}"
-                    bat "docker push ${DOCKER_IMAGE_NAME.toLowerCase()}/dairy-frontend:${DOCKER_IMAGE_TAG}"
+                    bat "docker push ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG}"
+                    bat "docker push ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG}"
                 }
             }
         }
@@ -50,4 +50,4 @@ pipeline {
             cleanWs()
         }
     }
-} 
+}

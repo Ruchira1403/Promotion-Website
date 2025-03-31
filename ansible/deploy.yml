@@ -1,0 +1,164 @@
+- name: Deploy Promotion Website
+  hosts: ec2
+  become: true
+
+  vars:
+    app_dir: "/home/ubuntu/promotion-website"
+    docker_compose_file: "{{ app_dir }}/docker-compose.yml"
+
+  tasks:
+    # Update apt packages
+    - name: Update apt packages
+      apt:
+        update_cache: yes
+
+    # Install required packages
+    - name: Install required packages
+      apt:
+        name: 
+          - docker.io
+          - docker-compose-plugin  # Updated to use the modern Docker Compose plugin
+          - curl
+          - git
+        state: present
+        update_cache: yes
+
+    # Ensure Docker service is running
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    # Add ubuntu user to docker group
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    # Create application directory
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+
+    # Clean up existing directory if not a git repository
+    - name: Check if git directory exists
+      stat:
+        path: "{{ app_dir }}/.git"
+      register: git_dir
+
+    - name: Remove existing directory if not a git repository
+      file:
+        path: "{{ app_dir }}"
+        state: absent
+      when: not git_dir.stat.exists
+
+    - name: Recreate application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+      when: not git_dir.stat.exists
+
+    # Clone or update repository
+    - name: Clone or update GitHub repository
+      git:
+        repo: https://github.com/udaraDev/Promotion-Website.git
+        dest: "{{ app_dir }}"
+        force: yes
+      become: yes
+      become_user: ubuntu
+
+    # Check directory structure for debugging
+    - name: Check directory structure
+      shell: find {{ app_dir }} -maxdepth 2 -type d | sort
+      register: dir_structure
+      
+    - name: Display directory structure
+      debug:
+        var: dir_structure.stdout_lines
+
+    # Create docker-compose.yml for production
+    - name: Create production docker-compose.yml
+      copy:
+        dest: "{{ docker_compose_file }}"
+        content: |
+          version: "3.8"
+          
+          services:
+            frontend:
+              build:
+                context: ./frontend
+                dockerfile: Dockerfile
+              ports:
+                - "5173:5173"  # Using Vite default port 5173
+              networks:
+                - app-network
+              restart: always
+              depends_on:
+                - backend
+          
+            backend:
+              build:
+                context: ./backend
+                dockerfile: Dockerfile
+              ports:
+                - "4000:4000"
+              env_file:
+                - .env
+              networks:
+                - app-network
+              restart: always
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+                interval: 30s
+                timeout: 10s
+                retries: 5
+          
+          networks:
+            app-network:
+              driver: bridge
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    # Create .env file for backend environment variables
+    - name: Create backend .env file
+      copy:
+        dest: "{{ app_dir }}/.env"
+        content: |
+          MONGODB_URI=mongodb+srv://usudarasubodhitha:Ky6eGwIULcmMRelb@cluster0.phvip.mongodb.net
+          JWT_SECRET=79240e340fb04076718f094981292e09aea180ad7138657ed8a0da39a9fe7c59884e7bf6019e16bd10e3ccf28c7bfca2561cdf6f8c339d3c6e2ab29f35e3d968
+          PORT=4000
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    # Start application using Docker Compose
+    - name: Start application using Docker Compose
+      environment:
+        DOCKER_BUILDKIT: 1  # Enable BuildKit to address legacy builder deprecation
+      command: docker compose up -d --build  # Updated to use the modern 'docker compose' plugin
+      args:
+        chdir: "{{ app_dir }}"
+      become: yes
+      become_user: ubuntu
+
+    # Verify the backend is running
+    - name: Check if backend is running
+      uri:
+        url: http://localhost:4000/health
+        method: GET
+        status_code: 200
+      register: health_check
+      retries: 5
+      delay: 10
+      until: health_check.status == 200
+      ignore_errors: yes
