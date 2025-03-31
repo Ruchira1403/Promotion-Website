@@ -1,9 +1,13 @@
 pipeline {
     agent any
     
+    tools {
+        dockerTool 'docker'  // This refers to the Docker installation name in Global Tool Configuration
+    }
+    
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
-        DOCKER_IMAGE_NAME = "tharuka2001"  // your Docker Hub username
+        DOCKER_IMAGE_NAME = "tharuka2001"
         DOCKER_IMAGE_TAG = "latest"
     }
     
@@ -18,8 +22,8 @@ pipeline {
         stage('Check Docker Installation') {
             steps {
                 script {
-                    bat(script: 'where docker', returnStatus: true)
-                    bat 'echo Checking if Docker is properly installed...'
+                    bat(script: 'docker --version', returnStatus: true)
+                    echo "Checking if Docker is properly installed..."
                 }
             }
         }
