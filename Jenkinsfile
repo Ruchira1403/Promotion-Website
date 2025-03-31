@@ -5,8 +5,8 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
         DOCKER_IMAGE_NAME = "tharuka2001"  // Change this to match your Docker Hub username
         DOCKER_IMAGE_TAG = "latest"
-        // Disable proxy for Docker operations
-        NO_PROXY = "*.docker.io,registry-1.docker.io"
+        // Remove proxy settings as they might interfere
+        NO_PROXY = "*.docker.io,registry-1.docker.io,index.docker.io"
     }
     
     stages {
@@ -17,33 +17,30 @@ pipeline {
             }
         }
         
-        stage('Configure Docker') {
+        stage('Docker Login') {
             steps {
                 script {
-                    // Configure Docker to not use proxy for registry
-                    bat '''
-                        docker system info
-                        docker network ls
-                    '''
-                }
-            }
-        }
-        
-        stage('Build Docker Images') {
-            steps {
-                script {
-                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend"
-                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend"
-                }
-            }
-        }
-        
-        stage('Login to DockerHub') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR')]) {
-                        bat 'echo %DOCKERHUB_CREDENTIALS_PSW%| docker login -u %DOCKERHUB_CREDENTIALS_USR% --password-stdin registry.hub.docker.com'
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', passwordVariable: 'DOCKERHUB_PASSWORD', usernameVariable: 'DOCKERHUB_USERNAME')]) {
+                        // Write credentials to a temporary file
+                        bat """
+                            @echo off
+                            echo %DOCKERHUB_PASSWORD% > docker_password.txt
+                            type docker_password.txt | docker login -u %DOCKERHUB_USERNAME% --password-stdin
+                            del docker_password.txt
+                        """
                     }
+                }
+            }
+        }
+        
+        stage('Build and Tag Images') {
+            steps {
+                script {
+                    bat """
+                        docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend
+                        docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend
+                        docker images
+                    """
                 }
             }
         }
@@ -51,13 +48,13 @@ pipeline {
         stage('Push Images to DockerHub') {
             steps {
                 script {
-                    // Add retries for push operation
-                    retry(3) {
-                        bat """
-                            docker push ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG}
-                            docker push ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG}
-                        """
-                    }
+                    // More verbose push with error handling
+                    bat """
+                        docker push ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} || exit 1
+                        echo "Backend image pushed successfully"
+                        docker push ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} || exit 1
+                        echo "Frontend image pushed successfully"
+                    """
                 }
             }
         }
@@ -67,6 +64,15 @@ pipeline {
         always {
             bat 'docker logout'
             cleanWs()
+        }
+        failure {
+            script {
+                bat '''
+                    echo "Pipeline failed! Displaying Docker info:"
+                    docker info
+                    docker images
+                '''
+            }
         }
     }
 }
