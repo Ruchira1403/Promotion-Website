@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
-        DOCKER_IMAGE_NAME = "udara397"  // your Docker Hub username
+        DOCKER_IMAGE_NAME = "tharuka2001"  // your Docker Hub username
         DOCKER_IMAGE_TAG = "latest"
     }
     
