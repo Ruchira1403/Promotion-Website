@@ -1,10 +1,6 @@
 pipeline {
     agent any
     
-    tools {
-        dockerTool 'docker'  // This refers to the Docker installation name in Global Tool Configuration
-    }
-    
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
         DOCKER_IMAGE_NAME = "tharuka2001"
@@ -22,8 +18,12 @@ pipeline {
         stage('Check Docker Installation') {
             steps {
                 script {
-                    bat(script: 'docker --version', returnStatus: true)
-                    echo "Checking if Docker is properly installed..."
+                    def dockerCheck = bat(script: 'docker --version', returnStatus: true)
+                    if (dockerCheck != 0) {
+                        error "Docker is not installed or not in PATH. Please install Docker on the Jenkins server."
+                    } else {
+                        echo "Docker is properly installed."
+                    }
                 }
             }
         }
@@ -33,12 +33,12 @@ pipeline {
                 script {
                     def backendBuildStatus = bat(script: "docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend", returnStatus: true)
                     if (backendBuildStatus != 0) {
-                        error "Failed to build backend Docker image. Make sure Docker is installed and in the PATH."
+                        error "Failed to build backend Docker image. Check Docker installation and Dockerfile."
                     }
                     
                     def frontendBuildStatus = bat(script: "docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend", returnStatus: true)
                     if (frontendBuildStatus != 0) {
-                        error "Failed to build frontend Docker image. Make sure Docker is installed and in the PATH."
+                        error "Failed to build frontend Docker image. Check Docker installation and Dockerfile."
                     }
                 }
             }
