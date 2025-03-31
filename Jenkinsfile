@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-cred')
-        DOCKER_IMAGE_NAME = "tharuka2001"
+        DOCKER_IMAGE_NAME = "udara397"  // your Docker Hub username
         DOCKER_IMAGE_TAG = "latest"
     }
     
@@ -15,31 +15,11 @@ pipeline {
             }
         }
         
-        stage('Check Docker Installation') {
-            steps {
-                script {
-                    def dockerCheck = bat(script: 'docker --version', returnStatus: true)
-                    if (dockerCheck != 0) {
-                        error "Docker is not installed or not in PATH. Please install Docker on the Jenkins server."
-                    } else {
-                        echo "Docker is properly installed."
-                    }
-                }
-            }
-        }
-        
         stage('Build Docker Images') {
             steps {
                 script {
-                    def backendBuildStatus = bat(script: "docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend", returnStatus: true)
-                    if (backendBuildStatus != 0) {
-                        error "Failed to build backend Docker image. Check Docker installation and Dockerfile."
-                    }
-                    
-                    def frontendBuildStatus = bat(script: "docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend", returnStatus: true)
-                    if (frontendBuildStatus != 0) {
-                        error "Failed to build frontend Docker image. Check Docker installation and Dockerfile."
-                    }
+                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG} ./backend"
+                    bat "docker build -t ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG} ./frontend"
                 }
             }
         }
@@ -48,10 +28,7 @@ pipeline {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', passwordVariable: 'DOCKERHUB_CREDENTIALS_PSW', usernameVariable: 'DOCKERHUB_CREDENTIALS_USR')]) {
-                        def loginStatus = bat(script: 'echo %DOCKERHUB_CREDENTIALS_PSW%| docker login -u %DOCKERHUB_CREDENTIALS_USR% --password-stdin', returnStatus: true)
-                        if (loginStatus != 0) {
-                            error "Failed to log in to Docker Hub."
-                        }
+                        bat 'echo %DOCKERHUB_CREDENTIALS_PSW%| docker login -u %DOCKERHUB_CREDENTIALS_USR% --password-stdin'
                     }
                 }
             }
@@ -60,15 +37,8 @@ pipeline {
         stage('Push Images to DockerHub') {
             steps {
                 script {
-                    def backendPushStatus = bat(script: "docker push ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG}", returnStatus: true)
-                    if (backendPushStatus != 0) {
-                        error "Failed to push backend image to Docker Hub."
-                    }
-                    
-                    def frontendPushStatus = bat(script: "docker push ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG}", returnStatus: true)
-                    if (frontendPushStatus != 0) {
-                        error "Failed to push frontend image to Docker Hub."
-                    }
+                    bat "docker push ${DOCKER_IMAGE_NAME}/dairy-backend:${DOCKER_IMAGE_TAG}"
+                    bat "docker push ${DOCKER_IMAGE_NAME}/dairy-frontend:${DOCKER_IMAGE_TAG}"
                 }
             }
         }
@@ -76,14 +46,8 @@ pipeline {
     
     post {
         always {
-            bat(script: 'docker logout', returnStatus: true)
+            bat 'docker logout'
             cleanWs()
-        }
-        success {
-            echo 'Pipeline completed successfully!'
-        }
-        failure {
-            echo 'Pipeline failed. Please check the logs for details.'
         }
     }
 }
