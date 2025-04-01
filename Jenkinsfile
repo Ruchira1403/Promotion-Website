@@ -60,18 +60,28 @@ pipeline {
                         
                         // Push backend images
                         retry(3) {
-                            bat """
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
-                            """
+                            try {
+                                bat """
+                                    docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
+                                    docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
+                                """
+                            } catch (Exception e) {
+                                echo "Failed to push backend images: ${e.message}"
+                                throw e
+                            }
                         }
                         
                         // Push frontend images
                         retry(3) {
-                            bat """
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
-                            """
+                            try {
+                                bat """
+                                    docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
+                                    docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
+                                """
+                            } catch (Exception e) {
+                                echo "Failed to push frontend images: ${e.message}"
+                                throw e
+                            }
                         }
                     }
                 }
@@ -79,6 +89,9 @@ pipeline {
         }
         
         stage('Terraform Apply') {
+            options {
+                timeout(time: 30, unit: 'MINUTES')
+            }
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -157,9 +170,12 @@ pipeline {
         }
         
         stage('Ansible Deployment') {
+            options {
+                timeout(time: 20, unit: 'MINUTES')
+            }
             steps {
                 dir(ANSIBLE_DIR) {
-                script {
+                    script {
                         if (!env.EC2_IP?.trim()) {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
@@ -213,6 +229,18 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
                                     -vvv
                             """
                         }
+
+                        // Add cleanup of SSH key after deployment
+                        try {
+                            // Your existing deployment code...
+                        } finally {
+                            // Clean up sensitive files
+                            bat """
+                                if exist "%WORKSPACE%\\.ssh\\Promotion-Website.pem" (
+                                    del /F /Q "%WORKSPACE%\\.ssh\\Promotion-Website.pem"
+                                )
+                            """
+                        }
                     }
                 }
             }
@@ -222,7 +250,11 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     post {
         always {
             script {
-            bat 'docker logout'
+                try {
+                    bat 'docker logout'
+                } catch (Exception e) {
+                    echo "Failed to logout from Docker: ${e.message}"
+                }
                 cleanWs(
                     cleanWhenSuccess: true,
                     cleanWhenFailure: true,
