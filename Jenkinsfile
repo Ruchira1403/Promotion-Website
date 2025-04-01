@@ -1,16 +1,3 @@
-def checkDiskSpace() {
-    def free = bat(
-        script: 'wmic logicaldisk where "DeviceID=\'C:\'" get FreeSpace /value',
-        returnStdout: true
-    ).trim()
-    def freeGB = (free =~ /FreeSpace=(\d+)/)[0][1].toLong() / (1024 * 1024 * 1024)
-    
-    if (freeGB < 10) {
-        error "Insufficient disk space: ${freeGB}GB free. Need at least 10GB."
-    }
-    echo "Available disk space: ${freeGB}GB"
-}
-
 pipeline {
     agent any
     
@@ -27,14 +14,6 @@ pipeline {
     }
     
     stages {
-        stage('Check Disk Space') {
-            steps {
-                script {
-                    checkDiskSpace()
-                }
-            }
-        }
-        
         stage('Checkout') {
             steps {
                 git branch: 'main',
@@ -107,37 +86,69 @@ pipeline {
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         script {
-                            // Set custom temp directory
-                            env.TF_DATA_DIR = "${WORKSPACE}\\.terraform-data"
-                            env.TMPDIR = "${WORKSPACE}\\.terraform-tmp"
+                            def maxRetries = 3
+                            def retryCount = 0
+                            def success = false
                             
-                            // Create temp directories
-                            bat """
-                                if not exist "${env.TF_DATA_DIR}" mkdir "${env.TF_DATA_DIR}"
-                                if not exist "${env.TMPDIR}" mkdir "${env.TMPDIR}"
-                            """
+                            // Set Terraform environment variables
+                            env.TF_CLI_TIMEOUT = "120"
+                            env.TF_HTTP_TIMEOUT = "120"
                             
-                            try {
-                                // Initialize and apply Terraform
-                                bat """
-                                    set TF_DATA_DIR=${env.TF_DATA_DIR}
-                                    set TMPDIR=${env.TMPDIR}
+                            // Clear proxy settings
+                            env.HTTP_PROXY = ""
+                            env.HTTPS_PROXY = ""
+                            env.NO_PROXY = "registry.terraform.io,releases.hashicorp.com"
+                            
+                            while (!success && retryCount < maxRetries) {
+                                try {
+                                    // First try to clean up any existing resources
+                                    bat """
+                                        terraform init -input=false
+                                        
+                                        :: Try to destroy any existing infrastructure
+                                        terraform destroy -auto-approve || exit 0
+                                        
+                                        :: Clean up terraform state
+                                        if exist ".terraform" rmdir /s /q .terraform
+                                        if exist ".terraform.lock.hcl" del /f .terraform.lock.hcl
+                                        if exist "terraform.tfstate" del /f terraform.tfstate
+                                        if exist "terraform.tfstate.backup" del /f terraform.tfstate.backup
+                                        
+                                        :: Reinitialize and apply
+                                        terraform init -input=false
+                                        terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
+                                    """
                                     
-                                    terraform init -input=false
-                                    terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
-                                """
-                                
-                                // Get the EC2 IP
-                                env.EC2_IP = bat(
-                                    script: 'terraform output -raw public_ip',
-                                    returnStdout: true
-                                ).trim()
-                            } finally {
-                                // Clean up temp directories
-                                bat """
-                                    if exist "${env.TF_DATA_DIR}" rmdir /s /q "${env.TF_DATA_DIR}"
-                                    if exist "${env.TMPDIR}" rmdir /s /q "${env.TMPDIR}"
-                                """
+                                    // Get the EC2 IP
+                                    env.EC2_IP = bat(
+                                        script: 'terraform output -raw public_ip',
+                                        returnStdout: true
+                                    ).trim()
+                                    
+                                    success = true
+                                } catch (Exception e) {
+                                    retryCount++
+                                    echo "Attempt ${retryCount} failed: ${e.message}"
+                                    
+                                    if (e.message.contains("VpcLimitExceeded")) {
+                                        error """
+                                            VPC limit exceeded. Please:
+                                            1. Log into AWS Console
+                                            2. Go to VPC Dashboard
+                                            3. Delete unused VPCs or request limit increase
+                                            Current error: ${e.message}
+                                        """
+                                    } else if (e.message.contains("connection attempt failed") || 
+                                             e.message.contains("deadline exceeded")) {
+                                        echo "Network connectivity issue detected. Waiting longer before retry..."
+                                        sleep(60)
+                                    } else if (retryCount >= maxRetries) {
+                                        error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
+                                    } else {
+                                        echo "Waiting 30 seconds before retrying..."
+                                        sleep(30)
+                                    }
+                                }
                             }
                         }
                     }
@@ -211,29 +222,12 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     post {
         always {
             script {
-                try {
-                    bat 'docker logout'
-                } catch (Exception e) {
-                    echo "Failed to logout from Docker: ${e.message}"
-                }
-                
-                try {
-                    cleanWs(
-                        cleanWhenSuccess: true,
-                        cleanWhenFailure: true,
-                        cleanWhenAborted: true,
-                        deleteDirs: true,
-                        patterns: [
-                            [pattern: '**/.terraform/**', type: 'INCLUDE'],
-                            [pattern: '**/.terraform.lock.hcl', type: 'INCLUDE'],
-                            [pattern: '**/terraform.tfstate*', type: 'INCLUDE'],
-                            [pattern: '**/*.pem', type: 'INCLUDE'],
-                            [pattern: '.git/**', type: 'EXCLUDE']
-                        ]
-                    )
-                } catch (Exception e) {
-                    echo "Failed to clean workspace: ${e.message}"
-                }
+            bat 'docker logout'
+                cleanWs(
+                    cleanWhenSuccess: true,
+                    cleanWhenFailure: true,
+                    cleanWhenAborted: true
+                )
             }
         }
         success {
@@ -244,10 +238,5 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
         failure {
             echo 'Deployment failed!'
         }
-    }
-    
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '5'))
-        disableConcurrentBuilds()
     }
 }
