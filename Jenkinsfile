@@ -1,6 +1,10 @@
 pipeline {
     agent any
     
+    parameters {
+        booleanParam(defaultValue: false, description: 'Create new infrastructure', name: 'CREATE_NEW_INFRASTRUCTURE')
+    }
+    
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.yml'
         TERRAFORM_DIR = 'terraform'
@@ -96,7 +100,7 @@ pipeline {
             }
         }
         
-        stage('Terraform Plan') {
+        stage('Get Infrastructure Info') {
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -104,36 +108,35 @@ pipeline {
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         script {
-                            // Check if output file exists using Windows commands
-                            def outputExists = bat(
-                                script: 'terraform output -json >nul 2>&1 && echo exists || echo notexists', 
-                                returnStdout: true
-                            ).trim().contains("exists")
-                            
-                            if (outputExists) {
-                                try {
-                                    env.EXISTING_EC2_IP = bat(
-                                        script: 'terraform output -raw public_ip 2>nul || echo ""', 
-                                        returnStdout: true
-                                    ).trim().readLines().last()
-                                    echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
-                                } catch (Exception e) {
-                                    env.EXISTING_EC2_IP = ""
-                                    echo "No existing infrastructure detected"
+                            try {
+                                env.EXISTING_EC2_IP = bat(
+                                    script: 'terraform output -raw public_ip 2>nul || echo ""', 
+                                    returnStdout: true
+                                ).trim()
+                                
+                                // Remove any extra lines that might be in the output
+                                if (env.EXISTING_EC2_IP.contains("\n")) {
+                                    env.EXISTING_EC2_IP = env.EXISTING_EC2_IP.readLines().last()
                                 }
+                                
+                                if (env.EXISTING_EC2_IP?.trim()) {
+                                    echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
+                                    // Set EC2_IP to existing value
+                                    env.EC2_IP = env.EXISTING_EC2_IP
+                                } else {
+                                    echo "No existing infrastructure IP found"
+                                }
+                            } catch (Exception e) {
+                                echo "Error getting existing infrastructure: ${e.message}"
+                                env.EXISTING_EC2_IP = ""
                             }
                             
-                            // Run terraform plan to detect changes
-                            def planExitCode = bat(
-                                script: "terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", 
-                                returnStatus: true
-                            )
-                            env.TERRAFORM_CHANGES = planExitCode == 2 ? 'true' : 'false'
-                            
-                            if (env.TERRAFORM_CHANGES == 'true') {
-                                echo "Infrastructure changes detected - will apply changes"
+                            // Only run terraform plan if we want to create new infrastructure
+                            if (params.CREATE_NEW_INFRASTRUCTURE) {
+                                bat "terraform plan -var=\"region=${AWS_REGION}\" -out=tfplan"
+                                echo "Infrastructure plan created and will apply if requested"
                             } else {
-                                echo "No infrastructure changes detected - will skip apply stage"
+                                echo "Skipping infrastructure plan as CREATE_NEW_INFRASTRUCTURE is false"
                             }
                         }
                     }
@@ -143,7 +146,9 @@ pipeline {
         
         stage('Terraform Apply') {
             when {
-                expression { return env.TERRAFORM_CHANGES == 'true' }
+                expression { 
+                    return params.CREATE_NEW_INFRASTRUCTURE && !env.EXISTING_EC2_IP?.trim()
+                }
             }
             steps {
                 dir(TERRAFORM_DIR) {
@@ -161,23 +166,11 @@ pipeline {
                                 returnStdout: true
                             ).trim().readLines().last()
                             
-                            // Add a small wait for EC2 instance to initialize
-                            echo "Waiting 30 seconds for EC2 instance to initialize..."
-                            sleep(30)
+                            // Add a wait for EC2 instance to initialize
+                            echo "Waiting 120 seconds for EC2 instance to initialize..."
+                            sleep(120)
                         }
                     }
-                }
-            }
-        }
-        
-        stage('Get Existing Infrastructure') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
-            }
-            steps {
-                script {
-                    env.EC2_IP = env.EXISTING_EC2_IP
-                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
                 }
             }
         }
@@ -191,17 +184,49 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
+                        echo "Starting deployment to EC2 instance at IP: ${env.EC2_IP}"
+                        
                         // Create directories if they don't exist
                         bat '''
                             if not exist ansible mkdir ansible
                             wsl mkdir -p /home/myuser/.ssh
+                            wsl mkdir -p /root/.ssh
                         '''
                         
-                        // Set proper permissions on existing key
+                        // Copy PEM file to WSL locations if using credential
+                        withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'PEM_FILE')]) {
+                            bat '''
+                                copy %PEM_FILE% .\\Promotion-Website.pem
+                                wsl cp /mnt/c/ProgramData/Jenkins/.jenkins/workspace/promotion-website-diary/ansible/Promotion-Website.pem /home/myuser/.ssh/
+                                wsl cp /mnt/c/ProgramData/Jenkins/.jenkins/workspace/promotion-website-diary/ansible/Promotion-Website.pem /root/.ssh/
+                            '''
+                        }
+                        
+                        // Set proper permissions on the key files
                         bat '''
                             wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
-                            wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                            wsl chmod 600 /root/.ssh/Promotion-Website.pem
                         '''
+                        
+                        // Wait for SSH to be available
+                        echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                        def sshReady = false
+                        def maxRetries = 10
+                        
+                        for (int i = 0; i < maxRetries && !sshReady; i++) {
+                            def sshResult = bat(
+                                script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${env.EC2_IP} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED",
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (sshResult.contains("SSH_CONNECTION_SUCCESSFUL")) {
+                                echo "SSH connection successful on attempt ${i+1}"
+                                sshReady = true
+                            } else {
+                                echo "SSH connection attempt ${i+1}/${maxRetries} failed, waiting 30 seconds..."
+                                sleep(30)
+                            }
+                        }
 
                         withCredentials([
                             usernamePassword(credentialsId: 'dockerhub-cred',
@@ -210,22 +235,45 @@ pipeline {
                         ]) {
                             def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
-                            // Create inventory file
+                            // Create inventory file with improved settings
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+${env.EC2_IP}
 
 [ec2:vars]
-ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
+ansible_user=ubuntu
+ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=180 -o ServerAliveInterval=30 -o ServerAliveCountMax=10'
+ansible_ssh_retries=10
+ansible_connection_timeout=300
+ansible_timeout=300
 """
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
+                            // Use a retry loop for the Ansible playbook
+                            def maxAttempts = 3
+                            def playbookSuccess = false
                             
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
+                            for (int attempt = 1; attempt <= maxAttempts && !playbookSuccess; attempt++) {
+                                echo "Ansible playbook execution attempt ${attempt}/${maxAttempts}"
+                                
+                                def result = bat(
+                                    script: "wsl ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=180 ansible-playbook -i temp_inventory.ini deploy.yml -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -v",
+                                    returnStatus: true
+                                )
+                                
+                                if (result == 0) {
+                                    echo "Ansible playbook executed successfully on attempt ${attempt}"
+                                    playbookSuccess = true
+                                } else {
+                                    echo "Ansible playbook failed on attempt ${attempt} with exit code ${result}"
+                                    if (attempt < maxAttempts) {
+                                        echo "Waiting 60 seconds before retry..."
+                                        sleep(60)
+                                    }
+                                }
+                            }
+                            
+                            if (!playbookSuccess) {
+                                error "Ansible deployment failed after ${maxAttempts} attempts"
                             }
                         }
                     }
@@ -233,7 +281,6 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
             }
         }
     }
-    
     
     post {
         always {
