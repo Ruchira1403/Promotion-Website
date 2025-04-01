@@ -5,26 +5,31 @@ pipeline {
         DOCKER_COMPOSE_FILE = 'docker-compose.yml'
         TERRAFORM_DIR = 'terraform'
         ANSIBLE_DIR = 'ansible'
-        AWS_REGION = 'us-east-1'  // Changed to match your region
+        AWS_REGION = 'us-east-1'
         WORKSPACE = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Promotion-Website'
         NO_PROXY = '*.docker.io,registry-1.docker.io'
-        WSL_SSH_KEY = '/root/.ssh/Promotion-Website.pem'  // Changed to match your key path
+        WSL_SSH_KEY = '/root/.ssh/Promotion-Website.pem'
         TERRAFORM_PARALLELISM = '10'
+        GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
     }
     
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/udaraDev/Promotion-Website.git'  // Changed to your repo
+                git branch: 'main', 
+                    url: 'https://github.com/udaraDev/Promotion-Website.git'
             }
         }
         
         stage('Build Docker Images with Docker Compose') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',  // Changed to match your credentials ID
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                          usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
-                        def gitCommitHash = bat(script: 'git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                        def gitCommitHash = bat(
+                            script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim().readLines().last()
                         
                         writeFile file: '.env', text: """
                             DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME}
@@ -34,7 +39,11 @@ pipeline {
                             PORT=4000
                         """
                         
-                        bat "docker-compose -f ${DOCKER_COMPOSE_FILE} build"
+                        bat """
+                            docker-compose -f ${DOCKER_COMPOSE_FILE} build \
+                                --build-arg DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} \
+                                --build-arg GIT_COMMIT_HASH=${gitCommitHash}
+                        """
                     }
                 }
             }
@@ -45,20 +54,32 @@ pipeline {
                 script {
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                          usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
-                        def gitCommitHash = bat(script: 'git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                        def gitCommitHash = bat(
+                            script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim().readLines().last()
                         
                         bat '''
+                            mkdir %USERPROFILE%\\.docker 2>nul
                             echo {"proxies":{"default":{"httpProxy":"","httpsProxy":"","noProxy":"*.docker.io,registry-1.docker.io"}}} > %USERPROFILE%\\.docker\\config.json
                         '''
                         
                         bat "echo %DOCKER_HUB_PASSWORD% | docker login -u %DOCKER_HUB_USERNAME% --password-stdin"
                         
                         retry(3) {
-                            bat "docker push %DOCKER_HUB_USERNAME%/dairy-frontend:${gitCommitHash}"  // Changed image names
+                            bat """
+                                docker tag ${DOCKER_HUB_USERNAME}/dairy-frontend:latest ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
+                            """
                         }
                         
                         retry(3) {
-                            bat "docker push %DOCKER_HUB_USERNAME%/dairy-backend:${gitCommitHash}"
+                            bat """
+                                docker tag ${DOCKER_HUB_USERNAME}/dairy-backend:latest ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
+                            """
                         }
                     }
                 }
@@ -68,9 +89,21 @@ pipeline {
         stage('Terraform Apply') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    script {
-                        bat "terraform init"
-                        bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -var-file=variables.tfvars"
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                         credentialsId: 'aws-credentials',
+                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        bat """
+                            terraform init -input=false
+                            terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
+                        """
+                        
+                        script {
+                            env.EC2_IP = bat(
+                                script: 'terraform output -raw public_ip',
+                                returnStdout: true
+                            ).trim()
+                        }
                     }
                 }
             }
@@ -85,37 +118,35 @@ pipeline {
                         }
                         
                         bat '''
-                            if not exist ansible mkdir ansible
                             wsl mkdir -p /root/.ssh
+                            wsl chmod 700 /root/.ssh
                         '''
                         
-                        bat '''
+                        bat """
+                            wsl cp ${WSL_SSH_KEY} /root/.ssh/
                             wsl chmod 600 /root/.ssh/Promotion-Website.pem
-                            wsl ls -la /root/.ssh/Promotion-Website.pem
-                        '''
+                        """
 
-                        withCredentials([
-                            usernamePassword(credentialsId: 'dockerhub-cred',
-                                         usernameVariable: 'DOCKER_HUB_USERNAME',
-                                         passwordVariable: 'DOCKER_HUB_PASSWORD')
-                        ]) {
-                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                     usernameVariable: 'DOCKER_HUB_USERNAME',
+                                     passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                            def gitCommitHash = bat(
+                                script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
                             
-                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+                            writeFile file: 'inventory.ini', text: """[ec2]
 ${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
 
 [ec2:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
-                            }
+                            bat """
+                                wsl ansible-playbook -i inventory.ini deploy.yml \\
+                                    -e "docker_hub_username=${DOCKER_HUB_USERNAME}" \\
+                                    -e "git_commit_hash=${gitCommitHash}"
+                            """
                         }
                     }
                 }
@@ -125,17 +156,8 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     
     post {
         always {
-            script {
-                bat 'docker logout'
-                try {
-                    cleanWs(
-                        deleteDirs: true,
-                        patterns: [[pattern: '**/.git/**', type: 'EXCLUDE']]
-                    )
-                } catch (Exception e) {
-                    echo "Warning: Workspace cleanup failed: ${e.getMessage()}"
-                }
-            }
+            bat 'docker logout'
+            cleanWs()
         }
         success {
             echo 'Deployment completed successfully!'
