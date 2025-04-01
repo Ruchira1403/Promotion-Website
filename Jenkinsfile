@@ -143,7 +143,7 @@ pipeline {
             }
         }
         
-        stage('Terraform Apply') {
+       stage('Terraform Apply') {
     when {
         expression { return env.TERRAFORM_CHANGES == 'true' }
     }
@@ -154,12 +154,12 @@ pipeline {
                 accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                 secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
                 script {
-                    // Apply with tfplan file using WSL
-                    bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                    // Apply using the same environment as the plan (Windows Terraform)
+                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
                     
-                    // Get the EC2 IP using WSL
+                    // Get the EC2 IP using Windows Terraform
                     env.EC2_IP = bat(
-                        script: 'wsl terraform output -raw public_ip',
+                        script: 'terraform output -raw public_ip',
                         returnStdout: true
                     ).trim().readLines().last()
                     
@@ -171,7 +171,6 @@ pipeline {
         }
     }
 }
-
 stage('Get Existing Infrastructure') {
     when {
         expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
