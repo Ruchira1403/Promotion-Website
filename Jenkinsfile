@@ -174,7 +174,10 @@ pipeline {
         
         stage('Get Existing Infrastructure') {
             when {
-                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+                expression { 
+                    // Always run this stage if there's an existing EC2 IP, regardless of terraform changes
+                    return env.EXISTING_EC2_IP?.trim() && env.EC2_IP == null
+                }
             }
             steps {
                 script {
