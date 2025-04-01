@@ -1,0 +1,145 @@
+pipeline {
+    agent any
+    environment {
+        ANSIBLE_DIR = 'ansible'
+        EC2_IP = '13.218.143.183'
+        NO_PROXY = '*.docker.io,registry-1.docker.io'
+        WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
+        GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'  // Add the full path to git executable
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/udaraDev/Promotion-Website.git'
+            }
+        }
+        
+        stage('Build and Push Docker Images') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                         usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                        
+                        // Use the full path to Git executable
+                        def gitCommitHash = bat(
+                            script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim().readLines().last()
+                        
+                        // Configure Docker proxy settings
+                        bat '''
+                            echo {"proxies":{"default":{"httpProxy":"","httpsProxy":"","noProxy":"*.docker.io,registry-1.docker.io"}}} > %USERPROFILE%\\.docker\\config.json
+                        '''
+                        
+                        // Login to Docker Hub securely
+                        bat "echo %DOCKER_HUB_PASSWORD% | docker login -u %DOCKER_HUB_USERNAME% --password-stdin"
+                        
+                        // Build and push frontend
+                        dir('frontend') {
+                            bat "docker build -t %DOCKER_HUB_USERNAME%/dairy-frontend:${gitCommitHash} ."
+                            retry(3) {
+                                bat "docker push %DOCKER_HUB_USERNAME%/dairy-frontend:${gitCommitHash}"
+                            }
+                        }
+                        
+                        // Build and push backend
+                        dir('backend') {
+                            bat "docker build -t %DOCKER_HUB_USERNAME%/dairy-backend:${gitCommitHash} ."
+                            retry(3) {
+                                bat "docker push %DOCKER_HUB_USERNAME%/dairy-backend:${gitCommitHash}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Prepare SSH Key') {
+            steps {
+                script {
+                    // Create directories if they don't exist
+                    bat '''
+                        if not exist ansible mkdir ansible
+                        wsl mkdir -p /home/myuser/.ssh
+                    '''
+                    
+                    // Set proper permissions on existing key
+                    bat '''
+                        wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                        wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                    '''
+                    
+                    // Verify SSH connection
+                    bat '''
+                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
+                    '''
+                }
+            }
+        }
+        
+        stage('Test Ansible Deployment') {
+            steps {
+                dir(ANSIBLE_DIR) {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'dockerhub-cred',
+                                     usernameVariable: 'DOCKER_HUB_USERNAME',
+                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
+                    ]) {
+                        script {
+                            // Use the full path to Git executable in WSL
+                            def gitCommitHash = bat(
+                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Create inventory file
+                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+${EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
+
+[ec2:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+"""
+                            // Run Ansible playbook with corrected command format
+                            def result = bat(
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                returnStatus: true
+                            )
+                            
+                            if (result != 0) {
+                                error "Ansible deployment failed with exit code ${result}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Clean up Docker and SSH key
+                bat 'docker logout'
+                
+                try {
+                    cleanWs(
+                        deleteDirs: true,
+                        patterns: [
+                            [pattern: '/.git/', type: 'EXCLUDE']
+                        ]
+                    )
+                } catch (Exception e) {
+                    echo "Warning: Workspace cleanup failed: ${e.getMessage()}"
+                }
+            }
+        }
+        success {
+            echo 'Deployment completed successfully!'
+        }
+        failure {
+            echo 'Deployment failed!'
+        }
+    }
+}
