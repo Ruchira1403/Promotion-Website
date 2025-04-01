@@ -193,20 +193,19 @@ pipeline {
                         // Create a temporary directory for SSH key
                         bat 'if not exist temp mkdir temp'
                         
-                        // Create inventory file with proper permissions
-                        writeFile file: 'inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_connection=ssh
-
-[ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
-"""
+                        // Create inventory file
+                        bat """
+                            echo [ec2] > inventory.ini
+                            echo ${env.EC2_IP} ansible_user=ubuntu ansible_connection=ssh >> inventory.ini
+                            echo. >> inventory.ini
+                            echo [ec2:vars] >> inventory.ini
+                            echo ansible_python_interpreter=/usr/bin/python3 >> inventory.ini
+                            echo ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60' >> inventory.ini
+                        """
                         
                         withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
-                            // Copy SSH key to a temporary file - use PowerShell to copy with better error handling
-                            bat '''
-                                powershell -Command "Copy-Item -Path \\"$env:SSH_KEY\\" -Destination .\\temp\\Promotion-Website.pem -Force"
-                            '''
+                            // Copy SSH key to a temporary file
+                            bat 'copy "%SSH_KEY%" .\\temp\\Promotion-Website.pem'
                         }
 
                         withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
@@ -217,45 +216,18 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
                                 returnStdout: true
                             ).trim().readLines().last()
                             
-                            // Create the volume path properly with double backslashes
-                            def ansiblePath = bat(script: 'cd && echo %CD%', returnStdout: true).trim().replaceAll('\\\\', '/').split('\n').last()
-                            def tempPath = "${ansiblePath}/temp".replaceAll('\\\\', '/')
-                            
-                            // Use the Windows Subsystem for Linux (WSL) approach if available
-                            try {
-                                // Try WSL approach first
-                                bat """
-                                    wsl mkdir -p /tmp/ansible-keys
-                                    wsl cp "${tempPath}/Promotion-Website.pem" /tmp/ansible-keys/
-                                    wsl chmod 600 /tmp/ansible-keys/Promotion-Website.pem
-                                    
-                                    wsl ansible-playbook -i "${ansiblePath}/inventory.ini" "${ansiblePath}/deploy.yml" \\
-                                    -e "docker_hub_username=${DOCKER_HUB_USERNAME}" \\
-                                    -e "git_commit_hash=${gitCommitHash}" \\
-                                    --private-key=/tmp/ansible-keys/Promotion-Website.pem -v
-                                    
-                                    wsl rm -rf /tmp/ansible-keys
-                                """
-                            } catch (Exception e) {
-                                // Fallback to Docker-based approach with adjustments
-                                echo "WSL approach failed, trying Docker-based approach: ${e.message}"
-                                
-                                // Run Ansible in Docker with host networking
-                                bat """
-                                    docker run --rm --network host \\
-                                    -v "${ansiblePath}:/ansible" \\
-                                    -v "${tempPath}:/keys:Z" \\
-                                    -e ANSIBLE_HOST_KEY_CHECKING=False \\
-                                    cytopia/ansible:latest-tools sh -c "chmod 600 /keys/Promotion-Website.pem && ansible-playbook -i /ansible/inventory.ini /ansible/deploy.yml \\
-                                    -e \\"docker_hub_username=${DOCKER_HUB_USERNAME}\\" \\
-                                    -e \\"git_commit_hash=${gitCommitHash}\\" \\
-                                    --private-key=/keys/Promotion-Website.pem -v"
-                                """
-                            }
-                            
-                            // Clean up temporary files
-                            bat 'rd /s /q temp'
+                            // Run Ansible in Docker container
+                            bat """
+                                docker run --rm -v "%CD%:/ansible" -v "%CD%\\temp:/keys" cytopia/ansible:latest-tools ansible-playbook -i /ansible/inventory.ini /ansible/deploy.yml ^
+                                -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
+                                -e "git_commit_hash=${gitCommitHash}" ^
+                                --private-key=/keys/Promotion-Website.pem ^
+                                -v
+                            """
                         }
+                        
+                        // Clean up temporary files
+                        bat 'rd /s /q temp'
                     }
                 }
             }
