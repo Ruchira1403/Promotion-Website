@@ -142,98 +142,47 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'true' }
-            }
-            steps {
-                dir(TERRAFORM_DIR) {
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        script {
-                            // Apply with tfplan file
-                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                            
-                            // Get the EC2 IP
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim().readLines().last()
-                            
-                            // Add a small wait for EC2 instance to initialize
-                            echo "Waiting 30 seconds for EC2 instance to initialize..."
-                            sleep(30)
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Get Existing Infrastructure') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
-            }
-            steps {
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'true' }
+    }
+    steps {
+        dir(TERRAFORM_DIR) {
+            withCredentials([
+                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
                 script {
-                    env.EC2_IP = env.EXISTING_EC2_IP
-                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
-                }
-            }
-        }
-        
-        stage('Ansible Deployment') {
-            steps {
-                dir(ANSIBLE_DIR) {
-                    script {
-                        // Verify EC2_IP is set
-                        if (!env.EC2_IP?.trim()) {
-                            error "EC2 IP address not set. Cannot proceed with deployment."
-                        }
-                        
-                        // Create directories if they don't exist
-                        bat '''
-                            if not exist ansible mkdir ansible
-                            wsl mkdir -p /home/myuser/.ssh
-                        '''
-                        
-                        // Set proper permissions on existing key
-                        bat '''
-                            wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
-                            wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
-                        '''
-
-                        withCredentials([
-                            usernamePassword(credentialsId: 'dockerhub-cred',
-                                         usernameVariable: 'DOCKER_HUB_USERNAME',
-                                         passwordVariable: 'DOCKER_HUB_PASSWORD')
-                        ]) {
-                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
-                            
-                            // Create inventory file
-                            writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
-
-[ec2:vars]
-ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
-"""
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
-                            }
-                        }
-                    }
+                    // Apply with tfplan file
+                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                    
+                    // Get the EC2 IP
+                    env.EC2_IP = bat(
+                        script: 'terraform output -raw public_ip',
+                        returnStdout: true
+                    ).trim().readLines().last()
+                    
+                    // Add a small wait for EC2 instance to initialize
+                    echo "Waiting 30 seconds for EC2 instance to initialize..."
+                    sleep(30)
                 }
             }
         }
     }
-    
+}
+
+stage('Get Existing Infrastructure') {
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+    }
+    steps {
+        script {
+            env.EC2_IP = env.EXISTING_EC2_IP
+            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+        }
+    }
+}
+        
+        
     
     post {
         always {
