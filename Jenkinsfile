@@ -10,7 +10,6 @@ pipeline {
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         TERRAFORM_PARALLELISM = '10'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
-        WSL_SSH_KEY = '/home/gayanshaminda2001/ansible/E-commerece-key-pair.pem'
     }
     
     stages {
@@ -82,7 +81,6 @@ pipeline {
                 }
             }
         }
-
         
         stage('Terraform Initialize') {
             steps {
@@ -91,7 +89,7 @@ pipeline {
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        // Use Windows terraform consistently
+                        // Use Windows terraform directly
                         bat "terraform init -input=false -upgrade"
                     }
                 }
@@ -125,7 +123,7 @@ pipeline {
                                 }
                             }
                             
-                            // Run terraform plan to detect changes (using Windows Terraform)
+                            // Run terraform plan to detect changes
                             def planExitCode = bat(
                                 script: "terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", 
                                 returnStatus: true
@@ -144,95 +142,85 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-    when {
-        expression { return env.TERRAFORM_CHANGES == 'true' }
-    }
-    steps {
-        dir(TERRAFORM_DIR) {
-            withCredentials([
-                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-            ]) {
-                script {
-                    // Apply with tfplan file
-                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                    
-                    // Get the EC2 IP
-                    env.EC2_IP = bat(
-                        script: 'terraform output -raw public_ip',
-                        returnStdout: true
-                    ).trim().readLines().last()
-                    
-                    // Add a small wait for EC2 instance to initialize
-                    echo "Waiting 30 seconds for EC2 instance to initialize..."
-                    sleep(30)
-                }
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'true' }
             }
-        }
-    }
-}
-
-stage('Get Existing Infrastructure') {
-    when {
-        expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
-    }
-    steps {
-        script {
-            env.EC2_IP = env.EXISTING_EC2_IP
-            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
-        }
-    }
-}
-
-        stage('Prepare SSH Key') {
             steps {
-                script {
-                    // Create directories if they don't exist
-                    bat '''
-                        if not exist ansible mkdir ansible
-                        wsl mkdir -p /home/myuser/.ssh
-                    '''
-                    
-                    // Set proper permissions on existing key
-                    bat '''
-                        wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
-                        wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
-                    '''
-                    
-                    // Verify SSH connection
-                    bat '''
-                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
-                    '''
+                dir(TERRAFORM_DIR) {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        script {
+                            // Apply with tfplan file
+                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                            
+                            // Get the EC2 IP
+                            env.EC2_IP = bat(
+                                script: 'terraform output -raw public_ip',
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Add a small wait for EC2 instance to initialize
+                            echo "Waiting 30 seconds for EC2 instance to initialize..."
+                            sleep(30)
+                        }
+                    }
                 }
             }
         }
         
-       stage('Ansible Deployment') {
+        stage('Get Existing Infrastructure') {
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+            }
+            steps {
+                script {
+                    env.EC2_IP = env.EXISTING_EC2_IP
+                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+                }
+            }
+        }
+        
+        stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    withCredentials([
-                        usernamePassword(credentialsId: 'dockerhub-cred',
-                                     usernameVariable: 'DOCKER_HUB_USERNAME',
-                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
-                    ]) {
-                        script {
-                            // Use the full path to Git executable in WSL
-                            def gitCommitHash = bat(
-                                script: "wsl git rev-parse --short HEAD",
-                                returnStdout: true
-                            ).trim().readLines().last()
+                    script {
+                        // Verify EC2_IP is set
+                        if (!env.EC2_IP?.trim()) {
+                            error "EC2 IP address not set. Cannot proceed with deployment."
+                        }
+                        
+                        // Create directories if they don't exist
+                        bat '''
+                            if not exist ansible mkdir ansible
+                            wsl mkdir -p /home/myuser/.ssh
+                        '''
+                        
+                        // Set proper permissions on existing key
+                        bat '''
+                            wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                            wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                        '''
+
+                        withCredentials([
+                            usernamePassword(credentialsId: 'dockerhub-cred',
+                                         usernameVariable: 'DOCKER_HUB_USERNAME',
+                                         passwordVariable: 'DOCKER_HUB_PASSWORD')
+                        ]) {
+                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
                             // Create inventory file
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
-${EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
+${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
 
 [ec2:vars]
 ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
-                            // Run Ansible playbook with corrected command format
+                            // Run Ansible playbook
                             def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
                                 returnStatus: true
                             )
                             
