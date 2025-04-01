@@ -10,6 +10,7 @@ pipeline {
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         TERRAFORM_PARALLELISM = '10'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
+        WSL_SSH_KEY = '/home/gayanshaminda2001/ansible/E-commerece-key-pair.pem'
     }
     
     stages {
@@ -182,42 +183,58 @@ pipeline {
             }
         }
         
+        stage('Prepare SSH Key') {
+            steps {
+                script {
+                    // Create directories if they don't exist
+                    bat '''
+                        if not exist ansible mkdir ansible
+                        wsl mkdir -p /home/gayanshaminda2001/ansible
+                    '''
+                    
+                    // Set proper permissions on existing key
+                    bat '''
+                        wsl chmod 600 /home/gayanshaminda2001/ansible/E-commerece-key-pair.pem
+                        wsl ls -la /home/gayanshaminda2001/ansible/E-commerece-key-pair.pem
+                    '''
+                    
+                    // Verify SSH connection
+                    bat """
+                        wsl ssh -o StrictHostKeyChecking=no -i ${WSL_SSH_KEY} ec2-user@${env.EC2_IP} "echo SSH connection successful"
+                    """
+                }
+            }
+        }
+        
         stage('Deploy with Ansible') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    withCredentials([
-                        sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')
-                    ]) {
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                             usernameVariable: 'DOCKER_HUB_USERNAME',
+                             passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
                         script {
-                            // Wait for SSH to be available
-                            echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                            def gitCommitHash = bat(
+                                script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
                             
-                            // Copy SSH key to a temporary location with correct permissions
-                            bat "copy ${SSH_KEY} id_rsa.pem"
-                            bat "icacls id_rsa.pem /inheritance:r"
-                            bat "icacls id_rsa.pem /grant:r \"%USERNAME%\":(R)"
+                            // Create inventory file
+                            writeFile file: 'temp_inventory.ini', text: """[webservers]
+${env.EC2_IP} ansible_user=ec2-user ansible_ssh_private_key_file=${WSL_SSH_KEY}
+
+[webservers:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+"""
+                            // Run Ansible playbook using WSL
+                            def result = bat(
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ec2-user --private-key ${WSL_SSH_KEY} -e \"docker_hub_username=${DOCKER_HUB_USERNAME} image_tag=${gitCommitHash}\" -vvv",
+                                returnStatus: true
+                            )
                             
-                            withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                                 usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
-                                
-                                // Create inventory file
-                                writeFile file: 'inventory.ini', text: "[webservers]\n${env.EC2_IP} ansible_user=ec2-user ansible_ssh_private_key_file=./id_rsa.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
-                                
-                                // Get git commit hash for image tags
-                                def gitCommitHash = bat(
-                                    script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
-                                    returnStdout: true
-                                ).trim().readLines().last()
-                                
-                                // Run ansible-playbook
-                                bat """
-                                set ANSIBLE_HOST_KEY_CHECKING=False
-                                ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_hub_username=${DOCKER_HUB_USERNAME} docker_hub_password=${DOCKER_HUB_PASSWORD} image_tag=${gitCommitHash}"
-                                """
+                            if (result != 0) {
+                                error "Ansible deployment failed with exit code ${result}"
                             }
-                            
-                            // Clean up temporary SSH key
-                            bat "del id_rsa.pem"
                         }
                     }
                 }
