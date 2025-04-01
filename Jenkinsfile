@@ -142,47 +142,88 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-    when {
-        expression { return env.TERRAFORM_CHANGES == 'true' }
-    }
-    steps {
-        dir(TERRAFORM_DIR) {
-            withCredentials([
-                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-            ]) {
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'true' }
+            }
+            steps {
+                dir(TERRAFORM_DIR) {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        script {
+                            // Apply with tfplan file
+                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                            
+                            // Get the EC2 IP
+                            env.EC2_IP = bat(
+                                script: 'terraform output -raw public_ip',
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Add a small wait for EC2 instance to initialize
+                            echo "Waiting 30 seconds for EC2 instance to initialize..."
+                            sleep(30)
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Get Existing Infrastructure') {
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+            }
+            steps {
                 script {
-                    // Apply with tfplan file
-                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                    
-                    // Get the EC2 IP
-                    env.EC2_IP = bat(
-                        script: 'terraform output -raw public_ip',
-                        returnStdout: true
-                    ).trim().readLines().last()
-                    
-                    // Add a small wait for EC2 instance to initialize
-                    echo "Waiting 30 seconds for EC2 instance to initialize..."
-                    sleep(30)
+                    env.EC2_IP = env.EXISTING_EC2_IP
+                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+                }
+            }
+        }
+        
+        stage('Deploy with Ansible') {
+            steps {
+                dir(ANSIBLE_DIR) {
+                    withCredentials([
+                        sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')
+                    ]) {
+                        script {
+                            // Wait for SSH to be available
+                            echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                            
+                            // Copy SSH key to a temporary location with correct permissions
+                            bat "copy ${SSH_KEY} id_rsa.pem"
+                            bat "icacls id_rsa.pem /inheritance:r"
+                            bat "icacls id_rsa.pem /grant:r \"%USERNAME%\":(R)"
+                            
+                            withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                 usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                                
+                                // Create inventory file
+                                writeFile file: 'inventory.ini', text: "[webservers]\n${env.EC2_IP} ansible_user=ec2-user ansible_ssh_private_key_file=./id_rsa.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+                                
+                                // Get git commit hash for image tags
+                                def gitCommitHash = bat(
+                                    script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                    returnStdout: true
+                                ).trim().readLines().last()
+                                
+                                // Run ansible-playbook
+                                bat """
+                                set ANSIBLE_HOST_KEY_CHECKING=False
+                                ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_hub_username=${DOCKER_HUB_USERNAME} docker_hub_password=${DOCKER_HUB_PASSWORD} image_tag=${gitCommitHash}"
+                                """
+                            }
+                            
+                            // Clean up temporary SSH key
+                            bat "del id_rsa.pem"
+                        }
+                    }
                 }
             }
         }
     }
-}
-
-stage('Get Existing Infrastructure') {
-    when {
-        expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
-    }
-    steps {
-        script {
-            env.EC2_IP = env.EXISTING_EC2_IP
-            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
-        }
-    }
-}
-        
-        
     
     post {
         always {
