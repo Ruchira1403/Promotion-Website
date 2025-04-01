@@ -89,7 +89,7 @@ pipeline {
                         script {
                             // Use the full path to Git executable in WSL
                             def gitCommitHash = bat(
-                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                script: "wsl git rev-parse --short HEAD",
                                 returnStdout: true
                             ).trim().readLines().last()
                             
