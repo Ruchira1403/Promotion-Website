@@ -162,8 +162,8 @@ pipeline {
                             ).trim().readLines().last()
                             
                             // Add a small wait for EC2 instance to initialize
-                            echo "Waiting 30 seconds for EC2 instance to initialize..."
-                            sleep(30)
+                            echo "Waiting 60 seconds for EC2 instance to initialize..."
+                            sleep(60)
                         }
                     }
                 }
@@ -218,14 +218,30 @@ ${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh
 ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
+                            // Run Ansible playbook with retries
+                            def maxRetries = 3
+                            def retryCount = 0
+                            def result = 1
+                            
+                            while (retryCount < maxRetries && result != 0) {
+                                if (retryCount > 0) {
+                                    echo "Retry attempt ${retryCount + 1} of ${maxRetries}"
+                                    sleep(30)
+                                }
+                                
+                                result = bat(
+                                    script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                    returnStatus: true
+                                )
+                                
+                                if (result != 0) {
+                                    echo "Ansible deployment failed with exit code ${result}"
+                                    retryCount++
+                                }
+                            }
                             
                             if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
+                                error "Ansible deployment failed after ${maxRetries} attempts"
                             }
                         }
                     }
