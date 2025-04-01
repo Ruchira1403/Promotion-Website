@@ -215,7 +215,7 @@ pipeline {
 ${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
 
 [ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
                             // Run Ansible playbook
