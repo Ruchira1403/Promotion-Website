@@ -31,6 +31,11 @@ pipeline {
                             returnStdout: true
                         ).trim().readLines().last()
                         
+                        // Configure Docker to bypass proxy for Docker Hub
+                        bat '''
+                            echo {"proxies":{"default":{"httpProxy":"","httpsProxy":"","noProxy":"*.docker.io,registry-1.docker.io"}}} > %USERPROFILE%\\.docker\\config.json
+                        '''
+                        
                         // Build backend image
                         bat """
                             docker build -t ${DOCKER_HUB_USERNAME}/dairy-backend:latest -t ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash} ./backend
@@ -78,7 +83,21 @@ pipeline {
             }
         }
         
-        stage('Terraform Apply') {
+        stage('Terraform Initialize') {
+            steps {
+                dir(TERRAFORM_DIR) {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        // Use WSL to run terraform init with upgrade flag
+                        bat "wsl terraform init -input=false -upgrade"
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Plan') {
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -86,41 +105,36 @@ pipeline {
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         script {
-                            def maxRetries = 3
-                            def retryCount = 0
-                            def success = false
+                            // Check if output file exists
+                            def outputExists = bat(
+                                script: 'wsl terraform output -json > nul 2>&1 && echo exists || echo notexists', 
+                                returnStdout: true
+                            ).trim().contains("exists")
                             
-                            while (!success && retryCount < maxRetries) {
+                            if (outputExists) {
                                 try {
-                                    // Initialize Terraform
-                                    bat "terraform init -input=false"
-                                    
-                                    // Try to destroy any existing infrastructure
-                                    bat """
-                                        terraform destroy -auto-approve || exit 0
-                                    """
-                                    
-                                    // Apply new infrastructure
-                                    bat """
-                                        terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
-                                    """
-                                    
-                                    // Get the EC2 IP
-                                    env.EC2_IP = bat(
-                                        script: 'terraform output -raw public_ip',
+                                    env.EXISTING_EC2_IP = bat(
+                                        script: 'wsl terraform output -raw public_ip 2> nul || echo ""', 
                                         returnStdout: true
-                                    ).trim()
-                                    
-                                    success = true
+                                    ).trim().readLines().last()
+                                    echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
                                 } catch (Exception e) {
-                                    retryCount++
-                                    echo "Attempt ${retryCount} failed: ${e.message}"
-                                    if (retryCount >= maxRetries) {
-                                        error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
-                                    }
-                                    echo "Waiting 30 seconds before retrying..."
-                                    sleep(30)
+                                    env.EXISTING_EC2_IP = ""
+                                    echo "No existing infrastructure detected"
                                 }
+                            }
+                            
+                            // Run terraform plan to detect changes
+                            def planExitCode = bat(
+                                script: "wsl terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", 
+                                returnStatus: true
+                            )
+                            env.TERRAFORM_CHANGES = planExitCode == 2 ? 'true' : 'false'
+                            
+                            if (env.TERRAFORM_CHANGES == 'true') {
+                                echo "Infrastructure changes detected - will apply changes"
+                            } else {
+                                echo "No infrastructure changes detected - will skip apply stage"
                             }
                         }
                     }
@@ -128,34 +142,67 @@ pipeline {
             }
         }
         
+        stage('Terraform Apply') {
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'true' }
+            }
+            steps {
+                dir(TERRAFORM_DIR) {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        script {
+                            // Apply with tfplan file
+                            bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                            
+                            // Get the EC2 IP
+                            env.EC2_IP = bat(
+                                script: 'wsl terraform output -raw public_ip',
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Add a small wait for EC2 instance to initialize
+                            echo "Waiting 30 seconds for EC2 instance to initialize..."
+                            sleep(30)
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Get Existing Infrastructure') {
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+            }
+            steps {
+                script {
+                    env.EC2_IP = env.EXISTING_EC2_IP
+                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+                }
+            }
+        }
+        
         stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                script {
+                    script {
                         if (!env.EC2_IP?.trim()) {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        // Create .ssh directory in Jenkins workspace using proper Windows commands
-                        bat """
-                            if not exist "%WORKSPACE%\\.ssh" (
-                                mkdir "%WORKSPACE%\\.ssh"
-                                icacls "%WORKSPACE%\\.ssh" /inheritance:r
-                                icacls "%WORKSPACE%\\.ssh" /grant "SYSTEM:(OI)(CI)F"
-                                icacls "%WORKSPACE%\\.ssh" /grant "Administrators:(OI)(CI)F"
-                                icacls "%WORKSPACE%\\.ssh" /grant "JENKINS:(OI)(CI)F"
-                            )
-                        """
+                        // Setup SSH key in WSL
+                        bat '''
+                            wsl mkdir -p /root/.ssh
+                            wsl chmod 700 /root/.ssh
+                        '''
                         
-                        // Copy SSH key to workspace with proper permissions
+                        // Copy SSH key to WSL
                         withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
-                            bat """
-                                copy /Y "%SSH_KEY%" "%WORKSPACE%\\.ssh\\Promotion-Website.pem"
-                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /inheritance:r
-                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "SYSTEM:R"
-                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "Administrators:R"
-                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "JENKINS:R"
-                            """
+                            bat '''
+                                type "%SSH_KEY%" | wsl tee /root/.ssh/Promotion-Website.pem > nul
+                                wsl chmod 600 /root/.ssh/Promotion-Website.pem
+                            '''
                         }
 
                         withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
@@ -166,20 +213,19 @@ pipeline {
                                 returnStdout: true
                             ).trim().readLines().last()
                             
-                            // Create inventory file
-                            writeFile file: 'inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WORKSPACE}\\.ssh\\Promotion-Website.pem ansible_connection=ssh
-
-[ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
-"""
-
-                            // Run Ansible playbook
+                            // Create inventory file directly in WSL
                             bat """
-                                set ANSIBLE_HOST_KEY_CHECKING=False
-                                set ANSIBLE_CONFIG=%WORKSPACE%\\ansible\\ansible.cfg
-                                ansible-playbook -i inventory.ini deploy.yml ^
+                                echo "[ec2]" | wsl tee inventory.ini
+                                echo "${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY} ansible_connection=ssh" | wsl tee -a inventory.ini
+                                echo "" | wsl tee -a inventory.ini
+                                echo "[ec2:vars]" | wsl tee -a inventory.ini
+                                echo "ansible_python_interpreter=/usr/bin/python3" | wsl tee -a inventory.ini
+                                echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'" | wsl tee -a inventory.ini
+                            """
+
+                            // Run Ansible playbook via WSL
+                            bat """
+                                wsl ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml ^
                                     -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
                                     -e "git_commit_hash=${gitCommitHash}" ^
                                     -vvv
@@ -194,11 +240,12 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     post {
         always {
             script {
-            bat 'docker logout'
+                bat 'docker logout'
                 cleanWs(
                     cleanWhenSuccess: true,
                     cleanWhenFailure: true,
-                    cleanWhenAborted: true
+                    cleanWhenAborted: true,
+                    patterns: [[pattern: '**/.git/**', type: 'EXCLUDE']]
                 )
             }
         }
