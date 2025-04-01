@@ -1,12 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"  # Use a more flexible version constraint
-    }
-  }
-}
-
 variable "region" {
   description = "AWS region to deploy resources"
   type        = string
@@ -15,16 +6,6 @@ variable "region" {
 
 provider "aws" {
   region = var.region
-  
-  # Add timeout configurations
-  http_proxy               = ""
-  https_proxy              = ""
-  no_proxy                = "registry.terraform.io,releases.hashicorp.com"
-  skip_metadata_api_check  = true
-  
-  # Add retry configurations
-  max_retries             = 10
-  retry_mode              = "standard"
 }
 
 variable "environment" {

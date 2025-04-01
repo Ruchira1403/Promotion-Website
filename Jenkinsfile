@@ -90,31 +90,10 @@ pipeline {
                             def retryCount = 0
                             def success = false
                             
-                            // Set Terraform environment variables for better network handling
-                            env.TF_CLI_TIMEOUT = "120"  // Increase timeout to 120 seconds
-                            env.TF_HTTP_TIMEOUT = "120"  // Increase HTTP timeout
-                            
-                            // Clear any proxy settings that might interfere
-                            env.HTTP_PROXY = ""
-                            env.HTTPS_PROXY = ""
-                            env.NO_PROXY = "registry.terraform.io,releases.hashicorp.com"
-                            
                             while (!success && retryCount < maxRetries) {
                                 try {
-                                    // Try to download provider first with increased timeout
-                                    bat """
-                                        set CURL_CONNECT_TIMEOUT=60
-                                        set HTTPS_PROXY=
-                                        set HTTP_PROXY=
-                                        
-                                        if not exist ".terraform\\providers" (
-                                            mkdir ".terraform\\providers"
-                                        )
-                                        
-                                        terraform providers
-                                        
-                                        terraform init -input=false -upgrade
-                                    """
+                                    // Initialize Terraform
+                                    bat "terraform init -input=false"
                                     
                                     // Try to destroy any existing infrastructure
                                     bat """
@@ -136,24 +115,11 @@ pipeline {
                                 } catch (Exception e) {
                                     retryCount++
                                     echo "Attempt ${retryCount} failed: ${e.message}"
-                                    
-                                    // Additional error handling for network issues
-                                    if (e.message.contains("connection attempt failed") || 
-                                        e.message.contains("deadline exceeded")) {
-                                        echo "Network connectivity issue detected. Waiting longer before retry..."
-                                        sleep(60)  // Wait longer for network issues
-                                    } else if (retryCount >= maxRetries) {
+                                    if (retryCount >= maxRetries) {
                                         error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
-                                    } else {
-                                        echo "Waiting 30 seconds before retrying..."
-                                        sleep(30)
                                     }
-                                    
-                                    // Try to clean up any partial state
-                                    bat """
-                                        if exist ".terraform" rmdir /s /q .terraform
-                                        if exist ".terraform.lock.hcl" del /f .terraform.lock.hcl
-                                    """
+                                    echo "Waiting 30 seconds before retrying..."
+                                    sleep(30)
                                 }
                             }
                         }
