@@ -21,7 +21,7 @@ const AboutUs = () => {
       description: "Of Excellence",
     },
     {
-      icon: <FaUsers className="text-4xl text-blue-500" />,
+      icon: <FaUsers className="text-4xl text-orange-50" />,
       title: "1000+",
       description: "Local Farmers",
     },
