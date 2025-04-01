@@ -82,6 +82,7 @@ pipeline {
                 }
             }
         }
+
         
         stage('Terraform Initialize') {
             steps {
