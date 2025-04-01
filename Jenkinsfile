@@ -186,48 +186,48 @@ pipeline {
             steps {
                 dir(ANSIBLE_DIR) {
                     script {
-                        // Verify EC2_IP is set
                         if (!env.EC2_IP?.trim()) {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        // Create directories if they don't exist
-                        bat '''
-                            if not exist ansible mkdir ansible
-                            wsl mkdir -p /home/myuser/.ssh
-                        '''
+                        // Create a temporary directory for SSH key
+                        bat 'if not exist temp mkdir temp'
                         
-                        // Set proper permissions on existing key
-                        bat '''
-                            wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
-                            wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
-                        '''
-
-                        withCredentials([
-                            usernamePassword(credentialsId: 'dockerhub-cred',
-                                         usernameVariable: 'DOCKER_HUB_USERNAME',
-                                         passwordVariable: 'DOCKER_HUB_PASSWORD')
-                        ]) {
-                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
-                            
-                            // Create inventory file
-                            writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
-
-[ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
-"""
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
-                            }
+                        // Create inventory file
+                        bat """
+                            echo [ec2] > inventory.ini
+                            echo ${env.EC2_IP} ansible_user=ubuntu ansible_connection=ssh >> inventory.ini
+                            echo. >> inventory.ini
+                            echo [ec2:vars] >> inventory.ini
+                            echo ansible_python_interpreter=/usr/bin/python3 >> inventory.ini
+                            echo ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60' >> inventory.ini
+                        """
+                        
+                        withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
+                            // Copy SSH key to a temporary file
+                            bat 'copy "%SSH_KEY%" .\\temp\\Promotion-Website.pem'
                         }
+
+                        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                usernameVariable: 'DOCKER_HUB_USERNAME',
+                                passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                            def gitCommitHash = bat(
+                                script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Run Ansible in Docker container
+                            bat """
+                                docker run --rm -v "%CD%:/ansible" -v "%CD%\\temp:/keys" cytopia/ansible:latest-tools ansible-playbook -i /ansible/inventory.ini /ansible/deploy.yml ^
+                                -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
+                                -e "git_commit_hash=${gitCommitHash}" ^
+                                --private-key=/keys/Promotion-Website.pem ^
+                                -v
+                            """
+                        }
+                        
+                        // Clean up temporary files
+                        bat 'rd /s /q temp'
                     }
                 }
             }
