@@ -109,18 +109,25 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        // Create .ssh directory in Jenkins workspace
+                        // Create .ssh directory in Jenkins workspace using proper Windows commands
                         bat """
-                            if not exist "%WORKSPACE%\\.ssh" mkdir "%WORKSPACE%\\.ssh"
-                            icacls "%WORKSPACE%\\.ssh" /grant:r "%USERNAME%:(OI)(CI)F"
+                            if not exist "%WORKSPACE%\\.ssh" (
+                                mkdir "%WORKSPACE%\\.ssh"
+                                icacls "%WORKSPACE%\\.ssh" /inheritance:r
+                                icacls "%WORKSPACE%\\.ssh" /grant "SYSTEM:(OI)(CI)F"
+                                icacls "%WORKSPACE%\\.ssh" /grant "Administrators:(OI)(CI)F"
+                                icacls "%WORKSPACE%\\.ssh" /grant "JENKINS:(OI)(CI)F"
+                            )
                         """
                         
-                        // Copy SSH key to workspace
+                        // Copy SSH key to workspace with proper permissions
                         withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
                             bat """
                                 copy /Y "%SSH_KEY%" "%WORKSPACE%\\.ssh\\Promotion-Website.pem"
                                 icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /inheritance:r
-                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant:r "%USERNAME%:R"
+                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "SYSTEM:R"
+                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "Administrators:R"
+                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant "JENKINS:R"
                             """
                         }
 
@@ -134,19 +141,21 @@ pipeline {
                             
                             // Create inventory file
                             writeFile file: 'inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=%WORKSPACE%\\.ssh\\Promotion-Website.pem
+${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WORKSPACE}\\.ssh\\Promotion-Website.pem ansible_connection=ssh
 
 [ec2:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
 
-                            // Run Ansible playbook using ansible-playbook command
+                            // Run Ansible playbook
                             bat """
                                 set ANSIBLE_HOST_KEY_CHECKING=False
+                                set ANSIBLE_CONFIG=%WORKSPACE%\\ansible\\ansible.cfg
                                 ansible-playbook -i inventory.ini deploy.yml ^
                                     -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
-                                    -e "git_commit_hash=${gitCommitHash}"
+                                    -e "git_commit_hash=${gitCommitHash}" ^
+                                    -vvv
                             """
                         }
                     }
