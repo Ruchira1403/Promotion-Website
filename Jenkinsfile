@@ -90,18 +90,32 @@ pipeline {
                             def retryCount = 0
                             def success = false
                             
+                            // Set Terraform environment variables
+                            env.TF_CLI_TIMEOUT = "120"
+                            env.TF_HTTP_TIMEOUT = "120"
+                            
+                            // Clear proxy settings
+                            env.HTTP_PROXY = ""
+                            env.HTTPS_PROXY = ""
+                            env.NO_PROXY = "registry.terraform.io,releases.hashicorp.com"
+                            
                             while (!success && retryCount < maxRetries) {
                                 try {
-                                    // Initialize Terraform
-                                    bat "terraform init -input=false"
-                                    
-                                    // Try to destroy any existing infrastructure
+                                    // First try to clean up any existing resources
                                     bat """
+                                        terraform init -input=false
+                                        
+                                        :: Try to destroy any existing infrastructure
                                         terraform destroy -auto-approve || exit 0
-                                    """
-                                    
-                                    // Apply new infrastructure
-                                    bat """
+                                        
+                                        :: Clean up terraform state
+                                        if exist ".terraform" rmdir /s /q .terraform
+                                        if exist ".terraform.lock.hcl" del /f .terraform.lock.hcl
+                                        if exist "terraform.tfstate" del /f terraform.tfstate
+                                        if exist "terraform.tfstate.backup" del /f terraform.tfstate.backup
+                                        
+                                        :: Reinitialize and apply
+                                        terraform init -input=false
                                         terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
                                     """
                                     
@@ -115,11 +129,25 @@ pipeline {
                                 } catch (Exception e) {
                                     retryCount++
                                     echo "Attempt ${retryCount} failed: ${e.message}"
-                                    if (retryCount >= maxRetries) {
+                                    
+                                    if (e.message.contains("VpcLimitExceeded")) {
+                                        error """
+                                            VPC limit exceeded. Please:
+                                            1. Log into AWS Console
+                                            2. Go to VPC Dashboard
+                                            3. Delete unused VPCs or request limit increase
+                                            Current error: ${e.message}
+                                        """
+                                    } else if (e.message.contains("connection attempt failed") || 
+                                             e.message.contains("deadline exceeded")) {
+                                        echo "Network connectivity issue detected. Waiting longer before retry..."
+                                        sleep(60)
+                                    } else if (retryCount >= maxRetries) {
                                         error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
+                                    } else {
+                                        echo "Waiting 30 seconds before retrying..."
+                                        sleep(30)
                                     }
-                                    echo "Waiting 30 seconds before retrying..."
-                                    sleep(30)
                                 }
                             }
                         }

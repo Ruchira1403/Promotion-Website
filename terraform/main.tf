@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"  # Use a more flexible version constraint
+    }
+  }
+}
+
 variable "region" {
   description = "AWS region to deploy resources"
   type        = string
@@ -6,6 +15,16 @@ variable "region" {
 
 provider "aws" {
   region = var.region
+  
+  # Add timeout configurations
+  http_proxy               = ""
+  https_proxy              = ""
+  no_proxy                = "registry.terraform.io,releases.hashicorp.com"
+  skip_metadata_api_check  = true
+  
+  # Add retry configurations
+  max_retries             = 10
+  retry_mode              = "standard"
 }
 
 variable "environment" {
@@ -13,22 +32,17 @@ variable "environment" {
   default     = "dev"
 }
 
-# Remove the data source block and create a new VPC
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-
+# Instead of creating a new VPC, use an existing one
+data "aws_vpc" "existing" {
   tags = {
-    Name        = "promotion-website-vpc"
-    Environment = var.environment
+    Name = "your-existing-vpc-name"  # Replace with your VPC name
   }
 }
 
-# Update the subnet to use the new VPC
+# Update subnet to use existing VPC
 resource "aws_subnet" "main" {
-  vpc_id                  = aws_vpc.main.id  # Changed from data.aws_vpc.existing.id
-  cidr_block              = "10.0.1.0/24"
+  vpc_id                  = data.aws_vpc.existing.id
+  cidr_block              = "10.0.1.0/24"  # Make sure this doesn't conflict
   availability_zone       = "us-east-1a"
   map_public_ip_on_launch = true
   
@@ -39,7 +53,7 @@ resource "aws_subnet" "main" {
 
 # Update the internet gateway to use the new VPC
 resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id  # Changed from data.aws_vpc.existing.id
+  vpc_id = data.aws_vpc.existing.id  # Changed from data.aws_vpc.existing.id
   
   tags = {
     Name = "promotion-website-igw"
@@ -48,7 +62,7 @@ resource "aws_internet_gateway" "main" {
 
 # Update the route table to use the new VPC
 resource "aws_route_table" "main" {
-  vpc_id = aws_vpc.main.id  # Changed from data.aws_vpc.existing.id
+  vpc_id = data.aws_vpc.existing.id  # Changed from data.aws_vpc.existing.id
   
   route {
     cidr_block = "0.0.0.0/0"
@@ -69,7 +83,7 @@ resource "aws_route_table_association" "main" {
 resource "aws_security_group" "promotion_website_sg" {
   name        = "promotion-website-security-group"
   description = "Security group for Promotion Website"
-  vpc_id      = aws_vpc.main.id  # Changed from data.aws_vpc.existing.id
+  vpc_id      = data.aws_vpc.existing.id
 
   ingress {
     from_port   = 22
