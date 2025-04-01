@@ -216,6 +216,11 @@ pipeline {
                                 returnStdout: true
                             ).trim().readLines().last()
                             
+                            // Run a preliminary command to fix the key permissions inside the container
+                            bat """
+                                docker run --rm -v "%CD%\\temp:/keys" alpine:latest chmod 600 /keys/Promotion-Website.pem
+                            """
+                            
                             // Run Ansible in Docker container
                             bat """
                                 docker run --rm -v "%CD%:/ansible" -v "%CD%\\temp:/keys" cytopia/ansible:latest-tools ansible-playbook -i /ansible/inventory.ini /ansible/deploy.yml ^
