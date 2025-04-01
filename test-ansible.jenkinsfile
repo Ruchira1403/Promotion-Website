@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         ANSIBLE_DIR = 'ansible'
-        EC2_IP = '13.218.143.183'  // Use your actual EC2 IP here
+        EC2_IP = '13.218.143.183'  // Update this with your current EC2 IP
         WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
     }
     
@@ -15,14 +15,39 @@ pipeline {
             }
         }
         
-        stage('Troubleshoot Connection') {
+        stage('Verify Environment') {
             steps {
                 script {
-                    bat '''
-                        wsl ping -c 4 13.218.143.183
-                        wsl nmap -p 22 13.218.143.183 || echo "Nmap not installed or port 22 closed"
-                        wsl cat /home/myuser/.ssh/Promotion-Website.pem | head -5 || echo "Cannot read key file"
-                    '''
+                    // Check WSL is available
+                    def wslCheck = bat(script: 'wsl --status', returnStatus: true)
+                    if (wslCheck != 0) {
+                        error "WSL is not properly configured on this Jenkins agent"
+                    }
+                    
+                    // Check if we can ping the EC2 host (with proper Windows ping)
+                    echo "Testing connectivity to EC2 instance at ${env.EC2_IP}"
+                    def pingResult = bat(script: "ping -n 4 ${env.EC2_IP}", returnStatus: true)
+                    
+                    if (pingResult != 0) {
+                        echo "WARNING: Cannot ping ${env.EC2_IP} - EC2 instance might be unreachable"
+                        
+                        // Continue anyway but warn the user
+                        echo "Please verify that your EC2 instance is running and the IP is correct"
+                        echo "Current IP set to: ${env.EC2_IP}"
+                    } else {
+                        echo "EC2 instance at ${env.EC2_IP} responds to ping"
+                    }
+                    
+                    // Check if the key file exists in WSL
+                    def keyExists = bat(
+                        script: "wsl test -f ${env.WSL_SSH_KEY} && echo Key exists || echo Key not found",
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "SSH key status: ${keyExists}"
+                    if (!keyExists.contains("exists")) {
+                        error "SSH key not found at ${env.WSL_SSH_KEY} in WSL environment"
+                    }
                 }
             }
         }
@@ -42,11 +67,20 @@ pipeline {
                         wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
                     '''
                     
-                    // Test SSH connection with retry and longer timeout
-                    retry(3) {
-                        bat '''
-                            wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
-                        '''
+                    // Test SSH connection with clear error reporting
+                    echo "Testing SSH connection to EC2 instance"
+                    def sshResult = bat(
+                        script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ${env.WSL_SSH_KEY} ubuntu@${env.EC2_IP} \"echo SSH connection successful\"",
+                        returnStatus: true
+                    )
+                    
+                    if (sshResult != 0) {
+                        error """SSH connection to EC2 instance failed. Please check:
+                        1. EC2 instance is running
+                        2. Security group is configured to allow SSH (port 22) traffic from this Jenkins server
+                        3. The IP address ${env.EC2_IP} is correct
+                        4. The SSH key at ${env.WSL_SSH_KEY} is valid for this instance
+                        """
                     }
                 }
             }
@@ -56,9 +90,25 @@ pipeline {
             steps {
                 dir(ANSIBLE_DIR) {
                     script {
-                        // Verify EC2_IP is set
-                        if (!env.EC2_IP?.trim()) {
-                            error "EC2 IP address not set. Cannot proceed with deployment."
+                        // First verify Ansible is installed in WSL
+                        def ansibleCheck = bat(
+                            script: "wsl ansible --version",
+                            returnStatus: true
+                        )
+                        
+                        if (ansibleCheck != 0) {
+                            error "Ansible is not installed in your WSL environment. Please install it with: wsl sudo apt update && sudo apt install -y ansible"
+                        }
+                        
+                        // Verify the deploy.yml file exists
+                        def playbook = "deploy.yml"
+                        def playExists = bat(
+                            script: "wsl test -f ${playbook} && echo Playbook exists || echo Playbook not found",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (!playExists.contains("exists")) {
+                            error "Ansible playbook ${playbook} not found in ${ANSIBLE_DIR} directory"
                         }
                         
                         withCredentials([
@@ -66,26 +116,24 @@ pipeline {
                                          usernameVariable: 'DOCKER_HUB_USERNAME',
                                          passwordVariable: 'DOCKER_HUB_PASSWORD')
                         ]) {
-                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                            def gitCommitHash = bat(script: 'git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
                             // Create inventory file with improved timeout settings
-                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+                            writeFile file: 'inventory.ini', text: """[ec2]
 ${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${env.WSL_SSH_KEY}
 
 [ec2:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30'
 """
-                            // Run Ansible playbook with retry
-                            retry(2) {
-                                def result = bat(
-                                    script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${env.WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                    returnStatus: true
-                                )
-                                
-                                if (result != 0) {
-                                    error "Ansible deployment failed with exit code ${result}"
-                                }
+                            // Run Ansible playbook with proper error handling
+                            def result = bat(
+                                script: "wsl ansible-playbook -i inventory.ini ${playbook} -u ubuntu --private-key ${env.WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                returnStatus: true
+                            )
+                            
+                            if (result != 0) {
+                                error "Ansible deployment failed with exit code ${result}"
                             }
                         }
                     }
@@ -107,6 +155,11 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60 -o Ser
             echo '2. Security group allows SSH (port 22) from Jenkins server'
             echo '3. EC2 IP address is correct and up-to-date'
             echo '4. SSH key is valid and has correct permissions'
+            echo ''
+            echo 'WSL troubleshooting:'
+            echo '1. Ensure WSL is properly installed: wsl --version'
+            echo '2. Ensure Ansible is installed in WSL: wsl ansible --version'
+            echo '3. Check SSH key permissions: wsl ls -la /home/myuser/.ssh/Promotion-Website.pem'
         }
     }
 }
