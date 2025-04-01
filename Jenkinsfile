@@ -186,38 +186,58 @@ pipeline {
             steps {
                 dir(ANSIBLE_DIR) {
                     withCredentials([
-                        sshUserPrivateKey(credentialsId: 'aws-ssh-key', keyFileVariable: 'SSH_KEY')
+                        usernamePassword(credentialsId: 'dockerhub-cred',
+                                     usernameVariable: 'DOCKER_HUB_USERNAME',
+                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
                     ]) {
                         script {
-                            // Wait for SSH to be available
-                            echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                            // Create directories if they don't exist
+                            bat '''
+                                if not exist ansible mkdir ansible
+                                wsl mkdir -p /home/myuser/.ssh
+                            '''
                             
-                            // Copy SSH key to a temporary location with correct permissions
-                            bat "copy ${SSH_KEY} id_rsa.pem"
-                            bat "icacls id_rsa.pem /inheritance:r"
-                            bat "icacls id_rsa.pem /grant:r \"%USERNAME%\":(R)"
+                            // Set proper permissions on SSH key
+                            bat '''
+                                wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                                wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                            '''
                             
-                            withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                                 usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
-                                
-                                // Create inventory file
-                                writeFile file: 'inventory.ini', text: "[webservers]\n${env.EC2_IP} ansible_user=ec2-user ansible_ssh_private_key_file=./id_rsa.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
-                                
-                                // Get git commit hash for image tags
-                                def gitCommitHash = bat(
-                                    script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
-                                    returnStdout: true
-                                ).trim().readLines().last()
-                                
-                                // Run ansible-playbook
-                                bat """
-                                set ANSIBLE_HOST_KEY_CHECKING=False
-                                ansible-playbook -i inventory.ini deploy.yml --extra-vars "docker_hub_username=${DOCKER_HUB_USERNAME} docker_hub_password=${DOCKER_HUB_PASSWORD} image_tag=${gitCommitHash}"
-                                """
+                            // Verify SSH connection
+                            bat """
+                                wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${env.EC2_IP} "echo SSH connection successful"
+                            """
+                            
+                            // Get git commit hash for image tags
+                            def gitCommitHash = bat(
+                                script: "wsl git rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Create inventory file with improved configuration
+                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+
+[ec2:vars]
+ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+"""
+                            
+                            // Run Ansible playbook with improved configuration
+                            def result = bat(
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                returnStatus: true
+                            )
+                            
+                            if (result != 0) {
+                                error "Ansible deployment failed with exit code ${result}"
                             }
                             
-                            // Clean up temporary SSH key
-                            bat "del id_rsa.pem"
+                            // Verify deployment success
+                            echo "Verifying deployment..."
+                            bat """
+                                wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${env.EC2_IP} "docker ps | grep -E 'dairy-frontend|dairy-backend'"
+                            """
                         }
                     }
                 }
