@@ -8,7 +8,6 @@ pipeline {
         AWS_REGION = 'us-east-1'
         WORKSPACE = 'C:\\ProgramData\\Jenkins\\.jenkins\\workspace\\Promotion-Website'
         NO_PROXY = '*.docker.io,registry-1.docker.io'
-        WSL_SSH_KEY = '/root/.ssh/Promotion-Website.pem'
         TERRAFORM_PARALLELISM = '10'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
     }
@@ -90,8 +89,8 @@ pipeline {
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        // Use WSL to run terraform init with upgrade flag
-                        bat "wsl terraform init -input=false -upgrade"
+                        // Use Windows terraform directly
+                        bat "terraform init -input=false -upgrade"
                     }
                 }
             }
@@ -105,16 +104,16 @@ pipeline {
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         script {
-                            // Check if output file exists
+                            // Check if output file exists using Windows commands
                             def outputExists = bat(
-                                script: 'wsl terraform output -json > nul 2>&1 && echo exists || echo notexists', 
+                                script: 'terraform output -json >nul 2>&1 && echo exists || echo notexists', 
                                 returnStdout: true
                             ).trim().contains("exists")
                             
                             if (outputExists) {
                                 try {
                                     env.EXISTING_EC2_IP = bat(
-                                        script: 'wsl terraform output -raw public_ip 2> nul || echo ""', 
+                                        script: 'terraform output -raw public_ip 2>nul || echo ""', 
                                         returnStdout: true
                                     ).trim().readLines().last()
                                     echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
@@ -126,7 +125,7 @@ pipeline {
                             
                             // Run terraform plan to detect changes
                             def planExitCode = bat(
-                                script: "wsl terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", 
+                                script: "terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", 
                                 returnStatus: true
                             )
                             env.TERRAFORM_CHANGES = planExitCode == 2 ? 'true' : 'false'
@@ -154,11 +153,11 @@ pipeline {
                     ]) {
                         script {
                             // Apply with tfplan file
-                            bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
                             
                             // Get the EC2 IP
                             env.EC2_IP = bat(
-                                script: 'wsl terraform output -raw public_ip',
+                                script: 'terraform output -raw public_ip',
                                 returnStdout: true
                             ).trim().readLines().last()
                             
@@ -191,46 +190,44 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        // Setup SSH key in WSL
-                        bat '''
-                            wsl mkdir -p /root/.ssh
-                            wsl chmod 700 /root/.ssh
-                        '''
+                        // Create a temporary directory for SSH key
+                        bat 'if not exist temp mkdir temp'
                         
-                        // Copy SSH key to WSL
+                        // Create inventory file
+                        bat """
+                            echo [ec2] > inventory.ini
+                            echo ${env.EC2_IP} ansible_user=ubuntu ansible_connection=ssh >> inventory.ini
+                            echo. >> inventory.ini
+                            echo [ec2:vars] >> inventory.ini
+                            echo ansible_python_interpreter=/usr/bin/python3 >> inventory.ini
+                            echo ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60' >> inventory.ini
+                        """
+                        
                         withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
-                            bat '''
-                                type "%SSH_KEY%" | wsl tee /root/.ssh/Promotion-Website.pem > nul
-                                wsl chmod 600 /root/.ssh/Promotion-Website.pem
-                            '''
+                            // Copy SSH key to a temporary file
+                            bat 'copy "%SSH_KEY%" .\\temp\\Promotion-Website.pem'
                         }
 
                         withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                                     usernameVariable: 'DOCKER_HUB_USERNAME',
-                                     passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                                usernameVariable: 'DOCKER_HUB_USERNAME',
+                                passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
                             def gitCommitHash = bat(
                                 script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
                                 returnStdout: true
                             ).trim().readLines().last()
                             
-                            // Create inventory file directly in WSL
+                            // Run Ansible in Docker container
                             bat """
-                                echo "[ec2]" | wsl tee inventory.ini
-                                echo "${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY} ansible_connection=ssh" | wsl tee -a inventory.ini
-                                echo "" | wsl tee -a inventory.ini
-                                echo "[ec2:vars]" | wsl tee -a inventory.ini
-                                echo "ansible_python_interpreter=/usr/bin/python3" | wsl tee -a inventory.ini
-                                echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'" | wsl tee -a inventory.ini
-                            """
-
-                            // Run Ansible playbook via WSL
-                            bat """
-                                wsl ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml ^
-                                    -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
-                                    -e "git_commit_hash=${gitCommitHash}" ^
-                                    -vvv
+                                docker run --rm -v "%CD%:/ansible" -v "%CD%\\temp:/keys" cytopia/ansible:latest-tools ansible-playbook -i /ansible/inventory.ini /ansible/deploy.yml ^
+                                -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
+                                -e "git_commit_hash=${gitCommitHash}" ^
+                                --private-key=/keys/Promotion-Website.pem ^
+                                -v
                             """
                         }
+                        
+                        // Clean up temporary files
+                        bat 'rd /s /q temp'
                     }
                 }
             }
