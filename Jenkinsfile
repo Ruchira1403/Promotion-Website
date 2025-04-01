@@ -189,8 +189,30 @@ stage('Get Existing Infrastructure') {
         }
     }
 }
+        stage('Prepare SSH Key') {
+            steps {
+                script {
+                    // Create directories if they don't exist
+                    bat '''
+                        if not exist ansible mkdir ansible
+                        wsl mkdir -p /home/myuser/.ssh
+                    '''
+                    
+                    // Set proper permissions on existing key
+                    bat '''
+                        wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                        wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                    '''
+                    
+                    // Verify SSH connection
+                    bat '''
+                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
+                    '''
+                }
+            }
+        }
         
-       stage('Test Ansible Deployment') {
+       stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
                     withCredentials([
