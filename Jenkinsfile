@@ -144,71 +144,52 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'true' }
-            }
-            steps {
-                dir(TERRAFORM_DIR) {
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                    ]) {
-                        script {
-                            // Apply with tfplan file
-                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                            
-                            // Get the EC2 IP
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim().readLines().last()
-                            
-                            // Add a small wait for EC2 instance to initialize
-                            echo "Waiting 30 seconds for EC2 instance to initialize..."
-                            sleep(30)
-                        }
-                    }
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'true' }
+    }
+    steps {
+        dir(TERRAFORM_DIR) {
+            withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-credentials',
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                script {
+                    // Apply with tfplan file using WSL
+                    bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                    
+                    // Get the EC2 IP using WSL
+                    env.EC2_IP = bat(
+                        script: 'wsl terraform output -raw public_ip',
+                        returnStdout: true
+                    ).trim().readLines().last()
+                    
+                    // Add a small wait for EC2 instance to initialize
+                    echo "Waiting 30 seconds for EC2 instance to initialize..."
+                    sleep(30)
                 }
             }
         }
-        
-        stage('Get Existing Infrastructure') {
-            when {
-                expression { 
-                    // Always run this stage if there's an existing EC2 IP, regardless of terraform changes
-                    return env.EXISTING_EC2_IP?.trim() && env.EC2_IP == null
-                }
-            }
-            steps {
+    }
+}
+
+stage('Get Existing Infrastructure') {
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+    }
+    steps {
+        dir(TERRAFORM_DIR) {
+            withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-credentials',
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
                 script {
                     env.EC2_IP = env.EXISTING_EC2_IP
                     echo "Using existing infrastructure with IP: ${env.EC2_IP}"
                 }
             }
         }
-        
-        stage('Prepare SSH Key') {
-            steps {
-                script {
-                    // Create directories if they don't exist
-                    bat '''
-                        if not exist ansible mkdir ansible
-                        wsl mkdir -p /home/gayanshaminda2001/ansible
-                    '''
-                    
-                    // Set proper permissions on existing key
-                    bat '''
-                        wsl chmod 600 /home/gayanshaminda2001/ansible/E-commerece-key-pair.pem
-                        wsl ls -la /home/gayanshaminda2001/ansible/E-commerece-key-pair.pem
-                    '''
-                    
-                    // Verify SSH connection
-                    bat """
-                        wsl ssh -o StrictHostKeyChecking=no -i ${WSL_SSH_KEY} ec2-user@${env.EC2_IP} "echo SSH connection successful"
-                    """
-                }
-            }
-        }
+    }
+}
         
         stage('Deploy with Ansible') {
             steps {
