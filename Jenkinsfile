@@ -3,6 +3,7 @@ pipeline {
     
     parameters {
         booleanParam(defaultValue: false, description: 'Create new infrastructure', name: 'CREATE_NEW_INFRASTRUCTURE')
+        string(defaultValue: '', description: 'EC2 IP address (leave empty to use existing)', name: 'MANUAL_EC2_IP')
     }
     
     environment {
@@ -86,7 +87,28 @@ pipeline {
             }
         }
         
+        stage('Setup EC2 IP') {
+            steps {
+                script {
+                    // If manual IP is provided, use it
+                    if (params.MANUAL_EC2_IP?.trim()) {
+                        env.EC2_IP = params.MANUAL_EC2_IP.trim()
+                        echo "Using manually provided EC2 IP: ${env.EC2_IP}"
+                    } else {
+                        echo "No manual EC2 IP provided, will attempt to detect from infrastructure"
+                        // Initialize EC2_IP as empty
+                        env.EC2_IP = ""
+                    }
+                }
+            }
+        }
+        
         stage('Terraform Initialize') {
+            when {
+                expression { 
+                    return params.CREATE_NEW_INFRASTRUCTURE || !params.MANUAL_EC2_IP?.trim()
+                }
+            }
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -101,6 +123,9 @@ pipeline {
         }
         
         stage('Get Infrastructure Info') {
+            when {
+                expression { !params.MANUAL_EC2_IP?.trim() }
+            }
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -109,15 +134,9 @@ pipeline {
                     ]) {
                         script {
                             try {
-                                env.EXISTING_EC2_IP = bat(
-                                    script: 'terraform output -raw public_ip 2>nul || echo ""', 
-                                    returnStdout: true
-                                ).trim()
-                                
-                                // Remove any extra lines that might be in the output
-                                if (env.EXISTING_EC2_IP.contains("\n")) {
-                                    env.EXISTING_EC2_IP = env.EXISTING_EC2_IP.readLines().last()
-                                }
+                                // Write the output to a file and read it back to avoid terminal coloring issues
+                                bat 'terraform output -raw public_ip > ec2_ip.txt || echo "" > ec2_ip.txt'
+                                env.EXISTING_EC2_IP = readFile('ec2_ip.txt').trim()
                                 
                                 if (env.EXISTING_EC2_IP?.trim()) {
                                     echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
@@ -128,7 +147,6 @@ pipeline {
                                 }
                             } catch (Exception e) {
                                 echo "Error getting existing infrastructure: ${e.message}"
-                                env.EXISTING_EC2_IP = ""
                             }
                             
                             // Only run terraform plan if we want to create new infrastructure
@@ -147,7 +165,7 @@ pipeline {
         stage('Terraform Apply') {
             when {
                 expression { 
-                    return params.CREATE_NEW_INFRASTRUCTURE && !env.EXISTING_EC2_IP?.trim()
+                    return params.CREATE_NEW_INFRASTRUCTURE && !env.EC2_IP?.trim()
                 }
             }
             steps {
@@ -160,11 +178,11 @@ pipeline {
                             // Apply with tfplan file
                             bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
                             
-                            // Get the EC2 IP
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim().readLines().last()
+                            // Get the EC2 IP and write to file
+                            bat 'terraform output -raw public_ip > ec2_ip.txt'
+                            env.EC2_IP = readFile('ec2_ip.txt').trim()
+                            
+                            echo "New EC2 instance created with IP: ${env.EC2_IP}"
                             
                             // Add a wait for EC2 instance to initialize
                             echo "Waiting 120 seconds for EC2 instance to initialize..."
@@ -175,15 +193,23 @@ pipeline {
             }
         }
         
+        stage('Verify EC2 IP') {
+            steps {
+                script {
+                    // Verify EC2_IP is set
+                    if (!env.EC2_IP?.trim()) {
+                        error "EC2 IP address not set. Please provide a manual EC2 IP or ensure infrastructure exists."
+                    }
+                    
+                    echo "Using EC2 IP address: ${env.EC2_IP}"
+                }
+            }
+        }
+        
         stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
                     script {
-                        // Verify EC2_IP is set
-                        if (!env.EC2_IP?.trim()) {
-                            error "EC2 IP address not set. Cannot proceed with deployment."
-                        }
-                        
                         echo "Starting deployment to EC2 instance at IP: ${env.EC2_IP}"
                         
                         // Create directories if they don't exist
@@ -208,14 +234,19 @@ pipeline {
                             wsl chmod 600 /root/.ssh/Promotion-Website.pem
                         '''
                         
-                        // Wait for SSH to be available
-                        echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                        // Wait for SSH to be available - use a file to store the EC2 IP
+                        writeFile(file: 'ec2_ip.txt', text: env.EC2_IP)
+                        
+                        echo "Testing SSH connection to ${env.EC2_IP}..."
                         def sshReady = false
                         def maxRetries = 10
                         
                         for (int i = 0; i < maxRetries && !sshReady; i++) {
+                            def ec2Ip = readFile('ec2_ip.txt').trim()
+                            def sshCmd = "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${ec2Ip} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED"
+                            
                             def sshResult = bat(
-                                script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${env.EC2_IP} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED",
+                                script: sshCmd,
                                 returnStdout: true
                             ).trim()
                             
@@ -235,9 +266,12 @@ pipeline {
                         ]) {
                             def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
+                            // Use the file-based EC2 IP
+                            def ec2Ip = readFile('ec2_ip.txt').trim()
+                            
                             // Create inventory file with improved settings
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP}
+${ec2Ip}
 
 [ec2:vars]
 ansible_user=ubuntu
@@ -295,9 +329,15 @@ ansible_timeout=300
             }
         }
         success {
-            echo 'Deployment completed successfully!'
-            echo "Frontend URL: http://${env.EC2_IP}:5173"
-            echo "Backend URL: http://${env.EC2_IP}:4000"
+            script {
+                if (env.EC2_IP) {
+                    echo 'Deployment completed successfully!'
+                    echo "Frontend URL: http://${env.EC2_IP}:5173"
+                    echo "Backend URL: http://${env.EC2_IP}:4000"
+                } else {
+                    echo 'Deployment completed but EC2 IP is not available.'
+                }
+            }
         }
         failure {
             echo 'Deployment failed!'
