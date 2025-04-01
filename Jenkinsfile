@@ -144,52 +144,45 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'true' }
-            }
-            steps {
-                dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                        credentialsId: 'aws-credentials',
-                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        script {
-                            // Apply using Windows Terraform to match plan version
-                            bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                            
-                            // Get the EC2 IP using Windows Terraform
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim().readLines().last()
-                            
-                            // Add a small wait for EC2 instance to initialize
-                            echo "Waiting 30 seconds for EC2 instance to initialize..."
-                            sleep(30)
-                        }
-                    }
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'true' }
+    }
+    steps {
+        dir(TERRAFORM_DIR) {
+            withCredentials([
+                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                script {
+                    // Apply with tfplan file
+                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                    
+                    // Get the EC2 IP
+                    env.EC2_IP = bat(
+                        script: 'terraform output -raw public_ip',
+                        returnStdout: true
+                    ).trim().readLines().last()
+                    
+                    // Add a small wait for EC2 instance to initialize
+                    echo "Waiting 30 seconds for EC2 instance to initialize..."
+                    sleep(30)
                 }
             }
         }
+    }
+}
 
-        stage('Get Existing Infrastructure') {
-            when {
-                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
-            }
-            steps {
-                dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                        credentialsId: 'aws-credentials',
-                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
-                        script {
-                            env.EC2_IP = env.EXISTING_EC2_IP
-                            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
-                        }
-                    }
-                }
-            }
+stage('Get Existing Infrastructure') {
+    when {
+        expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+    }
+    steps {
+        script {
+            env.EC2_IP = env.EXISTING_EC2_IP
+            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
         }
+    }
+}
 
         stage('Prepare SSH Key') {
             steps {
