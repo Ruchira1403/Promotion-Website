@@ -21,7 +21,7 @@ pipeline {
             }
         }
         
-        stage('Build Docker Images with Docker Compose') {
+        stage('Build Docker Images') {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
@@ -31,18 +31,14 @@ pipeline {
                             returnStdout: true
                         ).trim().readLines().last()
                         
-                        writeFile file: '.env', text: """
-                            DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME}
-                            GIT_COMMIT_HASH=${gitCommitHash}
-                            MONGODB_URI=mongodb+srv://usudarasubodhitha:Ky6eGwIULcmMRelb@cluster0.phvip.mongodb.net
-                            JWT_SECRET=79240e340fb04076718f094981292e09aea180ad7138657ed8a0da39a9fe7c59884e7bf6019e16bd10e3ccf28c7bfca2561cdf6f8c339d3c6e2ab29f35e3d968
-                            PORT=4000
+                        // Build backend image
+                        bat """
+                            docker build -t ${DOCKER_HUB_USERNAME}/dairy-backend:latest -t ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash} ./backend
                         """
                         
+                        // Build frontend image
                         bat """
-                            docker-compose -f ${DOCKER_COMPOSE_FILE} build \
-                                --build-arg DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} \
-                                --build-arg GIT_COMMIT_HASH=${gitCommitHash}
+                            docker build -t ${DOCKER_HUB_USERNAME}/dairy-frontend:latest -t ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash} ./frontend
                         """
                     }
                 }
@@ -59,26 +55,22 @@ pipeline {
                             returnStdout: true
                         ).trim().readLines().last()
                         
-                        bat '''
-                            mkdir %USERPROFILE%\\.docker 2>nul
-                            echo {"proxies":{"default":{"httpProxy":"","httpsProxy":"","noProxy":"*.docker.io,registry-1.docker.io"}}} > %USERPROFILE%\\.docker\\config.json
-                        '''
-                        
+                        // Login to Docker Hub
                         bat "echo %DOCKER_HUB_PASSWORD% | docker login -u %DOCKER_HUB_USERNAME% --password-stdin"
                         
+                        // Push backend images
                         retry(3) {
                             bat """
-                                docker tag ${DOCKER_HUB_USERNAME}/dairy-frontend:latest ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
                             """
                         }
                         
+                        // Push frontend images
                         retry(3) {
                             bat """
-                                docker tag ${DOCKER_HUB_USERNAME}/dairy-backend:latest ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
-                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
                             """
                         }
                     }
@@ -156,8 +148,14 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     
     post {
         always {
-            bat 'docker logout'
-            cleanWs()
+            script {
+                bat 'docker logout'
+                cleanWs(
+                    cleanWhenSuccess: true,
+                    cleanWhenFailure: true,
+                    cleanWhenAborted: true
+                )
+            }
         }
         success {
             echo 'Deployment completed successfully!'
