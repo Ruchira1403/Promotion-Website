@@ -1,34 +1,52 @@
-- name: Deploy Promotion Website
-  hosts: ec2
-  become: true
-
+- name: Deploy Promotion Website to EC2
+  hosts: all
+  become: yes
   vars:
+    ansible_ssh_timeout: 120
     app_dir: "/home/ubuntu/promotion-website"
-    docker_compose_file: "{{ app_dir }}/docker-compose.yml"
+    project_src: "{{ playbook_dir }}/.."
+
+  pre_tasks:
+    - name: Check if Docker is already installed
+      command: which docker
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
 
   tasks:
-    # Update apt packages
-    - name: Update apt packages
+    # Update packages and install dependencies
+    - name: Update package cache
       apt:
         update_cache: yes
+      retries: 3
+      delay: 5
+      until: true
+      when: docker_check.rc != 0
 
-    # Install required packages
-    - name: Install required packages
+    - name: Install dependencies
       apt:
-        name: 
-          - docker.io
-          - docker-compose-plugin  # Updated to use the modern Docker Compose plugin
+        name:
+          - apt-transport-https
+          - ca-certificates
           - curl
-          - git
+          - software-properties-common
         state: present
-        update_cache: yes
+      retries: 3
+      delay: 5
+      until: true
+      when: docker_check.rc != 0
 
-    # Ensure Docker service is running
-    - name: Ensure Docker service is running
-      service:
-        name: docker
-        state: started
-        enabled: true
+    # Install Docker using the official script
+    - name: Install Docker using official script
+      shell: |
+        curl -fsSL https://get.docker.com -o get-docker.sh
+        sh get-docker.sh
+      args:
+        creates: /usr/bin/docker
+      retries: 3
+      delay: 5
+      until: true
+      when: docker_check.rc != 0
 
     # Add ubuntu user to docker group
     - name: Add ubuntu user to docker group
@@ -36,6 +54,28 @@
         name: ubuntu
         groups: docker
         append: yes
+      when: docker_check.rc != 0
+
+    # Install Docker Compose
+    - name: Install Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-{{ ansible_system | lower }}-{{ ansible_architecture }}"
+        dest: "/usr/local/bin/docker-compose"
+        mode: '0755'
+        force: yes
+      retries: 3
+      delay: 5
+      until: true
+
+    # Ensure Docker service is running
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      retries: 3
+      delay: 5
+      until: true
 
     # Create application directory
     - name: Create application directory
@@ -46,59 +86,18 @@
         owner: ubuntu
         group: ubuntu
 
-    # Clean up existing directory if not a git repository
-    - name: Check if git directory exists
-      stat:
-        path: "{{ app_dir }}/.git"
-      register: git_dir
-
-    - name: Remove existing directory if not a git repository
-      file:
-        path: "{{ app_dir }}"
-        state: absent
-      when: not git_dir.stat.exists
-
-    - name: Recreate application directory
-      file:
-        path: "{{ app_dir }}"
-        state: directory
-        mode: '0755'
-        owner: ubuntu
-        group: ubuntu
-      when: not git_dir.stat.exists
-
-    # Clone or update repository
-    - name: Clone or update GitHub repository
-      git:
-        repo: https://github.com/udaraDev/Promotion-Website.git
-        dest: "{{ app_dir }}"
-        force: yes
-      become: yes
-      become_user: ubuntu
-
-    # Check directory structure for debugging
-    - name: Check directory structure
-      shell: find {{ app_dir }} -maxdepth 2 -type d | sort
-      register: dir_structure
-      
-    - name: Display directory structure
-      debug:
-        var: dir_structure.stdout_lines
-
-    # Create docker-compose.yml for production
-    - name: Create production docker-compose.yml
+    # Copy docker-compose file and environment file
+    - name: Copy docker-compose file
       copy:
-        dest: "{{ docker_compose_file }}"
+        dest: "{{ app_dir }}/docker-compose.yml"
         content: |
           version: "3.8"
           
           services:
             frontend:
-              build:
-                context: ./frontend
-                dockerfile: Dockerfile
+              image: tharuka2001/dairy-frontend:latest
               ports:
-                - "5173:5173"  # Using Vite default port 5173
+                - "5173:5173"
               networks:
                 - app-network
               restart: always
@@ -106,9 +105,7 @@
                 - backend
           
             backend:
-              build:
-                context: ./backend
-                dockerfile: Dockerfile
+              image: tharuka2001/dairy-backend:latest
               ports:
                 - "4000:4000"
               env_file:
@@ -129,8 +126,8 @@
         group: ubuntu
         mode: '0644'
 
-    # Create .env file for backend environment variables
-    - name: Create backend .env file
+    # Create .env file for backend
+    - name: Create .env file
       copy:
         dest: "{{ app_dir }}/.env"
         content: |
@@ -141,24 +138,60 @@
         group: ubuntu
         mode: '0600'
 
-    # Start application using Docker Compose
-    - name: Start application using Docker Compose
-      environment:
-        DOCKER_BUILDKIT: 1  # Enable BuildKit to address legacy builder deprecation
-      command: docker compose up -d --build  # Updated to use the modern 'docker compose' plugin
+    # Clean up old Docker resources
+    - name: Remove unused Docker data
+      shell: docker system prune -af --volumes
+      register: docker_prune
+      changed_when: docker_prune.stdout.find('Total reclaimed space') != -1
+      ignore_errors: yes
+
+    # Deploy with Docker Compose
+    - name: Stop existing containers
+      shell: docker-compose down
       args:
         chdir: "{{ app_dir }}"
-      become: yes
-      become_user: ubuntu
-
-    # Verify the backend is running
-    - name: Check if backend is running
-      uri:
-        url: http://localhost:4000/health
-        method: GET
-        status_code: 200
-      register: health_check
-      retries: 5
-      delay: 10
-      until: health_check.status == 200
       ignore_errors: yes
+      async: 300
+      poll: 10
+
+    - name: Pull Docker images
+      shell: docker-compose pull
+      args:
+        chdir: "{{ app_dir }}"
+      register: docker_compose_pull
+      async: 600
+      poll: 15
+
+    - name: Start Docker Compose services
+      shell: docker-compose up -d
+      args:
+        chdir: "{{ app_dir }}"
+      register: docker_compose_up
+      changed_when: docker_compose_up.stdout.find('Creating') != -1 or docker_compose_up.stdout.find('Starting') != -1
+      async: 600
+      poll: 15
+
+    - name: Wait for containers to fully start
+      pause:
+        seconds: 10
+      when: docker_compose_up.changed
+
+    # Verify deployment
+    - name: Check if containers are running
+      shell: docker ps | grep -E 'dairy-frontend|dairy-backend'
+      register: container_check
+      changed_when: false
+      ignore_errors: yes
+      retries: 3
+      delay: 5
+      until: container_check.rc == 0 or container_check.attempts == 3
+
+    - name: Deployment status
+      debug:
+        msg: "Deployment successful! Containers are running."
+      when: container_check.rc == 0
+
+    - name: Deployment status
+      fail:
+        msg: "Deployment failed. Containers are not running properly."
+      when: container_check.rc != 0
