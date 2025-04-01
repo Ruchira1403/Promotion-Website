@@ -190,29 +190,32 @@ stage('Get Existing Infrastructure') {
     }
 }
         
-        stage('Deploy with Ansible') {
+       stage('Test Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                             usernameVariable: 'DOCKER_HUB_USERNAME',
-                             passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'dockerhub-cred',
+                                     usernameVariable: 'DOCKER_HUB_USERNAME',
+                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
+                    ]) {
                         script {
+                            // Use the full path to Git executable in WSL
                             def gitCommitHash = bat(
-                                script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                script: "wsl git rev-parse --short HEAD",
                                 returnStdout: true
                             ).trim().readLines().last()
                             
                             // Create inventory file
-                            writeFile file: 'temp_inventory.ini', text: """[webservers]
-${env.EC2_IP} ansible_user=ec2-user ansible_ssh_private_key_file=${WSL_SSH_KEY}
+                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+${EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
 
-[webservers:vars]
-ansible_python_interpreter=/usr/bin/python3
+[ec2:vars]
+ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 """
-                            // Run Ansible playbook using WSL
+                            // Run Ansible playbook with corrected command format
                             def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ec2-user --private-key ${WSL_SSH_KEY} -e \"docker_hub_username=${DOCKER_HUB_USERNAME} image_tag=${gitCommitHash}\" -vvv",
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
                                 returnStatus: true
                             )
                             
@@ -225,6 +228,7 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no'
             }
         }
     }
+    
     
     post {
         always {
