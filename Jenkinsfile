@@ -16,7 +16,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', 
+                git branch: 'main',
                     url: 'https://github.com/udaraDev/Promotion-Website.git'
             }
         }
@@ -92,18 +92,20 @@ pipeline {
                             
                             while (!success && retryCount < maxRetries) {
                                 try {
+                                    // Initialize Terraform
+                                    bat "terraform init -input=false"
+                                    
                                     // Try to destroy any existing infrastructure
                                     bat """
-                                        terraform init -input=false
                                         terraform destroy -auto-approve || exit 0
                                     """
                                     
                                     // Apply new infrastructure
                                     bat """
-                                        terraform init -input=false
                                         terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
                                     """
                                     
+                                    // Get the EC2 IP
                                     env.EC2_IP = bat(
                                         script: 'terraform output -raw public_ip',
                                         returnStdout: true
@@ -112,11 +114,12 @@ pipeline {
                                     success = true
                                 } catch (Exception e) {
                                     retryCount++
+                                    echo "Attempt ${retryCount} failed: ${e.message}"
                                     if (retryCount >= maxRetries) {
                                         error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
                                     }
-                                    echo "Attempt ${retryCount} failed, retrying..."
-                                    sleep(30) // Wait 30 seconds before retrying
+                                    echo "Waiting 30 seconds before retrying..."
+                                    sleep(30)
                                 }
                             }
                         }
@@ -128,7 +131,7 @@ pipeline {
         stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    script {
+                script {
                         if (!env.EC2_IP?.trim()) {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
@@ -191,7 +194,7 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     post {
         always {
             script {
-                bat 'docker logout'
+            bat 'docker logout'
                 cleanWs(
                     cleanWhenSuccess: true,
                     cleanWhenFailure: true,
