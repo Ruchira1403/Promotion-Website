@@ -15,6 +15,7 @@ pipeline {
         TERRAFORM_PARALLELISM = '10'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
         WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
+        CREATE_NEW_INFRASTRUCTURE = 'false' // Set this to 'true' to create new infrastructure
     }
     
     stages {
@@ -89,10 +90,8 @@ pipeline {
         stage('Terraform Initialize') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                         credentialsId: 'aws-credentials',
-                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    withCredentials([string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
                         // Use -upgrade to ensure latest providers
                         bat "terraform init -input=false -upgrade"
                     }
@@ -103,30 +102,23 @@ pipeline {
         stage('Terraform Plan & Check Changes') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                         credentialsId: 'aws-credentials',
-                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    withCredentials([string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
                         script {
                             // Check if output file exists to detect existing infrastructure
                             def outputExists = bat(script: 'terraform output -json > nul 2>&1 && echo exists || echo notexists', returnStdout: true).trim().contains("exists")
                             
                             if (outputExists) {
                                 try {
-                                    env.EXISTING_EC2_IP = bat(
-                                        script: 'terraform output -raw public_ip 2>nul || echo ""', 
-                                        returnStdout: true
-                                    ).trim()
+                                    // Write output to file to avoid color codes
+                                    bat 'set NO_COLOR=true && terraform output -no-color -raw public_ip > ec2_ip.txt 2>nul || echo "" > ec2_ip.txt'
+                                    env.EXISTING_EC2_IP = readFile('ec2_ip.txt').trim()
                                     
-                                    // Remove any extra lines that might be in the output
-                                    if (env.EXISTING_EC2_IP.contains("\n")) {
-                                        env.EXISTING_EC2_IP = env.EXISTING_EC2_IP.readLines().last()
-                                    }
-                                    
-                                    if (env.EXISTING_EC2_IP?.trim()) {
+                                    if (env.EXISTING_EC2_IP?.trim() && env.EXISTING_EC2_IP =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/) {
                                         echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
                                     } else {
                                         echo "No existing infrastructure IP found"
+                                        env.EXISTING_EC2_IP = ""
                                     }
                                 } catch (Exception e) {
                                     echo "Error getting existing infrastructure: ${e.message}"
@@ -135,7 +127,7 @@ pipeline {
                             }
                             
                             // Run terraform plan with detailed exit code to automatically detect changes
-                            if (params.CREATE_NEW_INFRASTRUCTURE) {
+                            if (env.CREATE_NEW_INFRASTRUCTURE == 'true') {
                                 def planExitCode = bat(script: "terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", returnStatus: true)
                                 // Exit code 0 = No changes, 1 = Error, 2 = Changes present
                                 env.TERRAFORM_CHANGES = planExitCode == 2 || !env.EXISTING_EC2_IP?.trim() ? 'true' : 'false'
@@ -158,24 +150,20 @@ pipeline {
         stage('Terraform Apply') {
             when {
                 expression { 
-                    return params.CREATE_NEW_INFRASTRUCTURE && env.TERRAFORM_CHANGES == 'true'
+                    return env.CREATE_NEW_INFRASTRUCTURE == 'true' && env.TERRAFORM_CHANGES == 'true'
                 }
             }
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                         credentialsId: 'aws-credentials',
-                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    withCredentials([string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
                         script {
                             // Apply with parallelism for faster resource creation
                             bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
                             
-                            // Get the EC2 IP
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim().readLines().last()
+                            // Get the EC2 IP - write to file to avoid color codes
+                            bat 'set NO_COLOR=true && terraform output -no-color -raw public_ip > ec2_ip.txt'
+                            env.EC2_IP = readFile('ec2_ip.txt').trim()
                             
                             // Add a wait for EC2 instance to initialize
                             echo "Waiting 120 seconds for EC2 instance to initialize..."
@@ -209,7 +197,9 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        echo "Starting deployment to EC2 instance at IP: ${env.EC2_IP}"
+                        // Make sure the IP is clean
+                        def cleanIp = env.EC2_IP.trim()
+                        echo "Starting deployment to EC2 instance at IP: ${cleanIp}"
                         
                         // Create directories if they don't exist
                         bat '''
@@ -231,13 +221,13 @@ pipeline {
                         '''
                         
                         // Wait for SSH to be available
-                        echo "Waiting for SSH to become available on ${env.EC2_IP}..."
+                        echo "Waiting for SSH to become available on ${cleanIp}..."
                         def sshReady = false
                         def maxRetries = 10
                         
                         for (int i = 0; i < maxRetries && !sshReady; i++) {
                             def sshResult = bat(
-                                script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ${WSL_SSH_KEY} ubuntu@${env.EC2_IP} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED",
+                                script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ${WSL_SSH_KEY} ubuntu@${cleanIp} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED",
                                 returnStdout: true
                             ).trim()
                             
@@ -259,7 +249,7 @@ pipeline {
                             
                             // Create inventory file with improved settings
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP}
+${cleanIp}
 
 [ec2:vars]
 ansible_user=ubuntu
