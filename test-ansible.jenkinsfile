@@ -5,6 +5,7 @@ pipeline {
         EC2_IP = '13.218.143.183'
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
+        GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'  // Add the full path to git executable
     }
     
     stages {
@@ -20,7 +21,11 @@ pipeline {
                     withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                          usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
                         
-                        def gitCommitHash = bat(script: 'git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                        // Use the full path to Git executable
+                        def gitCommitHash = bat(
+                            script: "\"${env.GIT_PATH}\" rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim().readLines().last()
                         
                         // Configure Docker proxy settings
                         bat '''
@@ -32,17 +37,17 @@ pipeline {
                         
                         // Build and push frontend
                         dir('frontend') {
-                            bat "docker build -t %DOCKER_HUB_USERNAME%/frontend:${gitCommitHash} ."
+                            bat "docker build -t %DOCKER_HUB_USERNAME%/dairy-frontend:${gitCommitHash} ."
                             retry(3) {
-                                bat "docker push %DOCKER_HUB_USERNAME%/frontend:${gitCommitHash}"
+                                bat "docker push %DOCKER_HUB_USERNAME%/dairy-frontend:${gitCommitHash}"
                             }
                         }
                         
                         // Build and push backend
                         dir('backend') {
-                            bat "docker build -t %DOCKER_HUB_USERNAME%/backend:${gitCommitHash} ."
+                            bat "docker build -t %DOCKER_HUB_USERNAME%/dairy-backend:${gitCommitHash} ."
                             retry(3) {
-                                bat "docker push %DOCKER_HUB_USERNAME%/backend:${gitCommitHash}"
+                                bat "docker push %DOCKER_HUB_USERNAME%/dairy-backend:${gitCommitHash}"
                             }
                         }
                     }
@@ -82,7 +87,11 @@ pipeline {
                                      passwordVariable: 'DOCKER_HUB_PASSWORD')
                     ]) {
                         script {
-                            def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
+                            // Use the full path to Git executable in WSL
+                            def gitCommitHash = bat(
+                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
                             
                             // Create inventory file
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
