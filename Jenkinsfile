@@ -60,28 +60,18 @@ pipeline {
                         
                         // Push backend images
                         retry(3) {
-                            try {
-                                bat """
-                                    docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
-                                    docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
-                                """
-                            } catch (Exception e) {
-                                echo "Failed to push backend images: ${e.message}"
-                                throw e
-                            }
+                            bat """
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-backend:latest
+                            """
                         }
                         
                         // Push frontend images
                         retry(3) {
-                            try {
-                                bat """
-                                    docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
-                                    docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
-                                """
-                            } catch (Exception e) {
-                                echo "Failed to push frontend images: ${e.message}"
-                                throw e
-                            }
+                            bat """
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:${gitCommitHash}
+                                docker push ${DOCKER_HUB_USERNAME}/dairy-frontend:latest
+                            """
                         }
                     }
                 }
@@ -89,9 +79,6 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-            options {
-                timeout(time: 30, unit: 'MINUTES')
-            }
             steps {
                 dir(TERRAFORM_DIR) {
                     withCredentials([
@@ -103,32 +90,39 @@ pipeline {
                             def retryCount = 0
                             def success = false
                             
-                            // Set Terraform environment variables
-                            env.TF_CLI_TIMEOUT = "120"
-                            env.TF_HTTP_TIMEOUT = "120"
+                            // Set Terraform environment variables for better network handling
+                            env.TF_CLI_TIMEOUT = "120"  // Increase timeout to 120 seconds
+                            env.TF_HTTP_TIMEOUT = "120"  // Increase HTTP timeout
                             
-                            // Clear proxy settings
+                            // Clear any proxy settings that might interfere
                             env.HTTP_PROXY = ""
                             env.HTTPS_PROXY = ""
                             env.NO_PROXY = "registry.terraform.io,releases.hashicorp.com"
                             
                             while (!success && retryCount < maxRetries) {
                                 try {
-                                    // First try to clean up any existing resources
+                                    // Try to download provider first with increased timeout
                                     bat """
-                                        terraform init -input=false
+                                        set CURL_CONNECT_TIMEOUT=60
+                                        set HTTPS_PROXY=
+                                        set HTTP_PROXY=
                                         
-                                        :: Try to destroy any existing infrastructure
+                                        if not exist ".terraform\\providers" (
+                                            mkdir ".terraform\\providers"
+                                        )
+                                        
+                                        terraform providers
+                                        
+                                        terraform init -input=false -upgrade
+                                    """
+                                    
+                                    // Try to destroy any existing infrastructure
+                                    bat """
                                         terraform destroy -auto-approve || exit 0
-                                        
-                                        :: Clean up terraform state
-                                        if exist ".terraform" rmdir /s /q .terraform
-                                        if exist ".terraform.lock.hcl" del /f .terraform.lock.hcl
-                                        if exist "terraform.tfstate" del /f terraform.tfstate
-                                        if exist "terraform.tfstate.backup" del /f terraform.tfstate.backup
-                                        
-                                        :: Reinitialize and apply
-                                        terraform init -input=false
+                                    """
+                                    
+                                    // Apply new infrastructure
+                                    bat """
                                         terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
                                     """
                                     
@@ -143,24 +137,23 @@ pipeline {
                                     retryCount++
                                     echo "Attempt ${retryCount} failed: ${e.message}"
                                     
-                                    if (e.message.contains("VpcLimitExceeded")) {
-                                        error """
-                                            VPC limit exceeded. Please:
-                                            1. Log into AWS Console
-                                            2. Go to VPC Dashboard
-                                            3. Delete unused VPCs or request limit increase
-                                            Current error: ${e.message}
-                                        """
-                                    } else if (e.message.contains("connection attempt failed") || 
-                                             e.message.contains("deadline exceeded")) {
+                                    // Additional error handling for network issues
+                                    if (e.message.contains("connection attempt failed") || 
+                                        e.message.contains("deadline exceeded")) {
                                         echo "Network connectivity issue detected. Waiting longer before retry..."
-                                        sleep(60)
+                                        sleep(60)  // Wait longer for network issues
                                     } else if (retryCount >= maxRetries) {
                                         error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
                                     } else {
                                         echo "Waiting 30 seconds before retrying..."
                                         sleep(30)
                                     }
+                                    
+                                    // Try to clean up any partial state
+                                    bat """
+                                        if exist ".terraform" rmdir /s /q .terraform
+                                        if exist ".terraform.lock.hcl" del /f .terraform.lock.hcl
+                                    """
                                 }
                             }
                         }
@@ -170,12 +163,9 @@ pipeline {
         }
         
         stage('Ansible Deployment') {
-            options {
-                timeout(time: 20, unit: 'MINUTES')
-            }
             steps {
                 dir(ANSIBLE_DIR) {
-                    script {
+                script {
                         if (!env.EC2_IP?.trim()) {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
@@ -229,18 +219,6 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
                                     -vvv
                             """
                         }
-
-                        // Add cleanup of SSH key after deployment
-                        try {
-                            // Your existing deployment code...
-                        } finally {
-                            // Clean up sensitive files
-                            bat """
-                                if exist "%WORKSPACE%\\.ssh\\Promotion-Website.pem" (
-                                    del /F /Q "%WORKSPACE%\\.ssh\\Promotion-Website.pem"
-                                )
-                            """
-                        }
                     }
                 }
             }
@@ -250,11 +228,7 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
     post {
         always {
             script {
-                try {
-                    bat 'docker logout'
-                } catch (Exception e) {
-                    echo "Failed to logout from Docker: ${e.message}"
-                }
+            bat 'docker logout'
                 cleanWs(
                     cleanWhenSuccess: true,
                     cleanWhenFailure: true,
