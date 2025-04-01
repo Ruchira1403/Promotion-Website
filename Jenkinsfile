@@ -154,12 +154,12 @@ pipeline {
                 accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                 secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
                 script {
-                    // Apply using the same environment as the plan (Windows Terraform)
-                    bat "terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                    // Apply using WSL Terraform with parallelism for faster resource creation
+                    bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
                     
-                    // Get the EC2 IP using Windows Terraform
+                    // Get the EC2 IP using WSL Terraform
                     env.EC2_IP = bat(
-                        script: 'terraform output -raw public_ip',
+                        script: 'wsl terraform output -raw public_ip',
                         returnStdout: true
                     ).trim().readLines().last()
                     
@@ -171,6 +171,7 @@ pipeline {
         }
     }
 }
+
 stage('Get Existing Infrastructure') {
     when {
         expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
