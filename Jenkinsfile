@@ -191,17 +191,45 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
+                        echo "Waiting for EC2 instance at ${env.EC2_IP} to fully initialize..."
+                        // Increase wait time for EC2 to properly initialize
+                        sleep(120)
+                        
                         // Create directories if they don't exist
                         bat '''
                             if not exist ansible mkdir ansible
                             wsl mkdir -p /home/myuser/.ssh
                         '''
                         
-                        // Set proper permissions on existing key
+                        // Copy key file to both locations to ensure it's available
+                        withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'PEM_FILE')]) {
+                            bat '''
+                                copy %PEM_FILE% Promotion-Website.pem
+                                wsl cp /mnt/c/ProgramData/Jenkins/.jenkins/workspace/promotion-website-diary/ansible/Promotion-Website.pem /home/myuser/.ssh/
+                                wsl mkdir -p /root/.ssh
+                                wsl cp /home/myuser/.ssh/Promotion-Website.pem /root/.ssh/
+                            '''
+                        }
+                        
+                        // Set proper permissions on key in both locations
                         bat '''
                             wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                            wsl chmod 600 /root/.ssh/Promotion-Website.pem
                             wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                            wsl ls -la /root/.ssh/Promotion-Website.pem
                         '''
+
+                        // Test SSH connection before proceeding
+                        echo "Testing SSH connection to ${env.EC2_IP}..."
+                        def sshTestResult = bat(
+                            script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${env.EC2_IP} -C 'echo SSH_CONNECTION_SUCCESSFUL'",
+                            returnStatus: true
+                        )
+                        
+                        if (sshTestResult != 0) {
+                            echo "SSH connection test failed. Waiting an additional 60 seconds..."
+                            sleep(60)
+                        }
 
                         withCredentials([
                             usernamePassword(credentialsId: 'dockerhub-cred',
@@ -210,22 +238,45 @@ pipeline {
                         ]) {
                             def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
-                            // Create inventory file
+                            // Create inventory file with improved connection parameters
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+${env.EC2_IP}
 
 [ec2:vars]
+ansible_user=ubuntu
 ansible_ssh_private_key_file=/root/.ssh/Promotion-Website.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=180 -o ServerAliveInterval=30'
+ansible_ssh_timeout=300
+ansible_connection=ssh
+ansible_ssh_retries=10
 """
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/Promotion-Website.pem -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
+                            // Run Ansible playbook with retry mechanism
+                            def maxRetries = 3
+                            def success = false
                             
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
+                            for (int i = 0; i < maxRetries && !success; i++) {
+                                echo "Ansible deployment attempt ${i+1} of ${maxRetries}"
+                                
+                                def result = bat(
+                                    script: "wsl ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i temp_inventory.ini deploy.yml -v",
+                                    returnStatus: true
+                                )
+                                
+                                if (result == 0) {
+                                    success = true
+                                    echo "Ansible deployment succeeded on attempt ${i+1}"
+                                } else {
+                                    echo "Ansible deployment failed on attempt ${i+1} with exit code ${result}"
+                                    if (i < maxRetries - 1) {
+                                        echo "Waiting 60 seconds before next retry..."
+                                        sleep(60)
+                                    }
+                                }
+                            }
+                            
+                            if (!success) {
+                                error "Ansible deployment failed after ${maxRetries} attempts"
                             }
                         }
                     }
