@@ -15,6 +15,7 @@ pipeline {
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         TERRAFORM_PARALLELISM = '10'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
+        WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
     }
     
     stages {
@@ -103,9 +104,7 @@ pipeline {
         
         stage('Terraform Initialize') {
             when {
-                expression { 
-                    return !params.MANUAL_EC2_IP?.trim()
-                }
+                expression { return !params.MANUAL_EC2_IP?.trim() }
             }
             steps {
                 dir(TERRAFORM_DIR) {
@@ -113,16 +112,15 @@ pipeline {
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        // Use Windows terraform directly
                         bat "terraform init -input=false -upgrade"
                     }
                 }
             }
         }
         
-        stage('Get Infrastructure Info') {
+        stage('Terraform Plan') {
             when {
-                expression { !params.MANUAL_EC2_IP?.trim() }
+                expression { return !params.MANUAL_EC2_IP?.trim() }
             }
             steps {
                 dir(TERRAFORM_DIR) {
@@ -131,39 +129,39 @@ pipeline {
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
                         script {
-                            // Use a simple approach to get the IP - redirect to a file with no color
-                            bat 'set NO_COLOR=true && terraform output -no-color -raw public_ip > ec2_ip.txt 2>terraformerror.txt || type terraformerror.txt'
-                            
-                            // Read the IP from the file, but check if it exists first
-                            if (fileExists('ec2_ip.txt')) {
-                                def ipContent = readFile('ec2_ip.txt').trim()
-                                // Make sure it looks like an IP (basic validation)
-                                if (ipContent =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/) {
-                                    env.EC2_IP = ipContent
-                                    echo "Found existing infrastructure with valid IP: ${env.EC2_IP}"
-                                    
-                                    // Run a basic health check to see if the instance is responding
-                                    def pingResult = bat(
-                                        script: "ping -n 1 -w 5000 ${env.EC2_IP} > pingresult.txt 2>&1",
-                                        returnStatus: true
-                                    )
-                                    
-                                    if (pingResult == 0) {
-                                        echo "Successfully pinged ${env.EC2_IP}"
+                            // Always check for existing infrastructure first
+                            try {
+                                bat 'set NO_COLOR=true && terraform output -no-color -raw public_ip > ec2_ip.txt || echo ""'
+                                if (fileExists('ec2_ip.txt')) {
+                                    def ipContent = readFile('ec2_ip.txt').trim()
+                                    if (ipContent =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/) {
+                                        env.EXISTING_EC2_IP = ipContent
+                                        env.EC2_IP = ipContent
+                                        echo "Found existing infrastructure with IP: ${env.EC2_IP}"
                                     } else {
-                                        echo "Warning: Could not ping ${env.EC2_IP}, instance might be down"
+                                        echo "No valid IP found in terraform output"
+                                        env.EXISTING_EC2_IP = ""
                                     }
-                                } else {
-                                    echo "EC2 IP found but it doesn't look valid: ${ipContent}"
                                 }
-                            } else {
-                                echo "No existing infrastructure IP found"
+                            } catch (Exception e) {
+                                echo "Error checking existing infrastructure: ${e.message}"
+                                env.EXISTING_EC2_IP = ""
                             }
                             
-                            // If we still don't have an IP and we want to create infrastructure
-                            if (!env.EC2_IP?.trim() && params.CREATE_NEW_INFRASTRUCTURE) {
+                            // Only run terraform plan if explicitly requested
+                            if (params.CREATE_NEW_INFRASTRUCTURE) {
                                 bat "terraform plan -var=\"region=${AWS_REGION}\" -out=tfplan"
                                 echo "Infrastructure plan created and will apply if requested"
+                                // Disable applying if we already have an IP
+                                if (env.EXISTING_EC2_IP?.trim()) {
+                                    echo "Using existing infrastructure even though CREATE_NEW_INFRASTRUCTURE is enabled"
+                                    env.TERRAFORM_CHANGES = 'false'
+                                } else {
+                                    env.TERRAFORM_CHANGES = 'true'
+                                }
+                            } else {
+                                echo "Skipping infrastructure plan as CREATE_NEW_INFRASTRUCTURE is false"
+                                env.TERRAFORM_CHANGES = 'false'
                             }
                         }
                     }
@@ -174,7 +172,7 @@ pipeline {
         stage('Terraform Apply') {
             when {
                 expression { 
-                    return params.CREATE_NEW_INFRASTRUCTURE && !env.EC2_IP?.trim()
+                    return env.TERRAFORM_CHANGES == 'true' && !env.EXISTING_EC2_IP?.trim()
                 }
             }
             steps {
@@ -224,7 +222,9 @@ pipeline {
             steps {
                 dir(ANSIBLE_DIR) {
                     script {
-                        echo "Starting deployment to EC2 instance at IP: ${env.EC2_IP}"
+                        // Store the IP in a variable to ensure it's clean
+                        def cleanIp = env.EC2_IP.trim()
+                        echo "Starting deployment to EC2 instance at IP: ${cleanIp}"
                         
                         // Create directories if they don't exist
                         bat '''
@@ -248,15 +248,13 @@ pipeline {
                             wsl chmod 600 /root/.ssh/Promotion-Website.pem
                         '''
                         
-                        // Store the IP in a variable to ensure it's clean
-                        def cleanIp = env.EC2_IP.trim()
-                        
+                        // Test SSH connection before proceeding
                         echo "Testing SSH connection to ${cleanIp}..."
                         def sshReady = false
                         def maxRetries = 10
                         
                         for (int i = 0; i < maxRetries && !sshReady; i++) {
-                            def sshCmd = "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${cleanIp} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED"
+                            def sshCmd = "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ${WSL_SSH_KEY} ubuntu@${cleanIp} -C 'echo SSH_CONNECTION_SUCCESSFUL' || echo CONNECTION_FAILED"
                             
                             def sshResult = bat(
                                 script: sshCmd,
@@ -279,18 +277,15 @@ pipeline {
                         ]) {
                             def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
-                            // Create inventory file with improved settings
+                            // Create inventory file
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
 ${cleanIp}
 
 [ec2:vars]
 ansible_user=ubuntu
-ansible_ssh_private_key_file=/home/myuser/.ssh/Promotion-Website.pem
+ansible_ssh_private_key_file=${WSL_SSH_KEY}
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=180 -o ServerAliveInterval=30 -o ServerAliveCountMax=10'
-ansible_ssh_retries=10
-ansible_connection_timeout=300
-ansible_timeout=300
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
                             // Use a retry loop for the Ansible playbook
                             def maxAttempts = 3
@@ -300,7 +295,7 @@ ansible_timeout=300
                                 echo "Ansible playbook execution attempt ${attempt}/${maxAttempts}"
                                 
                                 def result = bat(
-                                    script: "wsl ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=180 ansible-playbook -i temp_inventory.ini deploy.yml -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -v",
+                                    script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -v",
                                     returnStatus: true
                                 )
                                 
