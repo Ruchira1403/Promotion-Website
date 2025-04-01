@@ -81,10 +81,10 @@ pipeline {
         stage('Terraform Apply') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                         credentialsId: 'aws-credentials',
-                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
                         bat """
                             terraform init -input=false
                             terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
