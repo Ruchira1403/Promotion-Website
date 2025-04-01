@@ -109,15 +109,20 @@ pipeline {
                             error "EC2 IP address not set. Cannot proceed with deployment."
                         }
                         
-                        bat '''
-                            wsl mkdir -p /root/.ssh
-                            wsl chmod 700 /root/.ssh
-                        '''
-                        
+                        // Create .ssh directory in Jenkins workspace
                         bat """
-                            wsl cp ${WSL_SSH_KEY} /root/.ssh/
-                            wsl chmod 600 /root/.ssh/Promotion-Website.pem
+                            if not exist "%WORKSPACE%\\.ssh" mkdir "%WORKSPACE%\\.ssh"
+                            icacls "%WORKSPACE%\\.ssh" /grant:r "%USERNAME%:(OI)(CI)F"
                         """
+                        
+                        // Copy SSH key to workspace
+                        withCredentials([file(credentialsId: 'promotion-website-pem', variable: 'SSH_KEY')]) {
+                            bat """
+                                copy /Y "%SSH_KEY%" "%WORKSPACE%\\.ssh\\Promotion-Website.pem"
+                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /inheritance:r
+                                icacls "%WORKSPACE%\\.ssh\\Promotion-Website.pem" /grant:r "%USERNAME%:R"
+                            """
+                        }
 
                         withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                                      usernameVariable: 'DOCKER_HUB_USERNAME',
@@ -127,16 +132,20 @@ pipeline {
                                 returnStdout: true
                             ).trim().readLines().last()
                             
+                            // Create inventory file
                             writeFile file: 'inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
+${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=%WORKSPACE%\\.ssh\\Promotion-Website.pem
 
 [ec2:vars]
 ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
 """
+
+                            // Run Ansible playbook using ansible-playbook command
                             bat """
-                                wsl ansible-playbook -i inventory.ini deploy.yml \\
-                                    -e "docker_hub_username=${DOCKER_HUB_USERNAME}" \\
+                                set ANSIBLE_HOST_KEY_CHECKING=False
+                                ansible-playbook -i inventory.ini deploy.yml ^
+                                    -e "docker_hub_username=%DOCKER_HUB_USERNAME%" ^
                                     -e "git_commit_hash=${gitCommitHash}"
                             """
                         }
