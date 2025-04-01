@@ -15,6 +15,18 @@ pipeline {
             }
         }
         
+        stage('Troubleshoot Connection') {
+            steps {
+                script {
+                    bat '''
+                        wsl ping -c 4 13.218.143.183
+                        wsl nmap -p 22 13.218.143.183 || echo "Nmap not installed or port 22 closed"
+                        wsl cat /home/myuser/.ssh/Promotion-Website.pem | head -5 || echo "Cannot read key file"
+                    '''
+                }
+            }
+        }
+        
         stage('Prepare SSH Key') {
             steps {
                 script {
@@ -30,10 +42,12 @@ pipeline {
                         wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
                     '''
                     
-                    // Test SSH connection
-                    bat '''
-                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
-                    '''
+                    // Test SSH connection with retry and longer timeout
+                    retry(3) {
+                        bat '''
+                            wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
+                        '''
+                    }
                 }
             }
         }
@@ -54,22 +68,24 @@ pipeline {
                         ]) {
                             def gitCommitHash = bat(script: 'wsl git rev-parse --short HEAD', returnStdout: true).trim().readLines().last()
                             
-                            // Create inventory file
+                            // Create inventory file with improved timeout settings
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
 ${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${env.WSL_SSH_KEY}
 
 [ec2:vars]
 ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=30'
 """
-                            // Run Ansible playbook
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${env.WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
+                            // Run Ansible playbook with retry
+                            retry(2) {
+                                def result = bat(
+                                    script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${env.WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=tharuka2001 GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                    returnStatus: true
+                                )
+                                
+                                if (result != 0) {
+                                    error "Ansible deployment failed with exit code ${result}"
+                                }
                             }
                         }
                     }
@@ -86,6 +102,11 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
         }
         failure {
             echo 'Ansible deployment test failed!'
+            echo 'Please check the following:'
+            echo '1. EC2 instance status (running/stopped)'
+            echo '2. Security group allows SSH (port 22) from Jenkins server'
+            echo '3. EC2 IP address is correct and up-to-date'
+            echo '4. SSH key is valid and has correct permissions'
         }
     }
 }
