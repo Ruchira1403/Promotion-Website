@@ -13,15 +13,15 @@ variable "environment" {
   default     = "dev"
 }
 
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+# Use data source to find existing VPC
+data "aws_vpc" "existing" {
   tags = {
-    Name = "promotion-website-vpc"
+    Environment = "dev"  # Adjust tags to match your existing VPC
   }
 }
 
 resource "aws_subnet" "main" {
-  vpc_id                  = aws_vpc.main.id
+  vpc_id                  = data.aws_vpc.existing.id
   cidr_block              = "10.0.1.0/24"
   availability_zone       = "us-east-1a"
   map_public_ip_on_launch = true
@@ -31,14 +31,14 @@ resource "aws_subnet" "main" {
 }
 
 resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = data.aws_vpc.existing.id
   tags = {
     Name = "promotion-website-igw"
   }
 }
 
 resource "aws_route_table" "main" {
-  vpc_id = aws_vpc.main.id
+  vpc_id = data.aws_vpc.existing.id
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.main.id
@@ -56,7 +56,7 @@ resource "aws_route_table_association" "main" {
 resource "aws_security_group" "promotion_website_sg" {
   name        = "promotion-website-security-group"
   description = "Security group for Promotion Website"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = data.aws_vpc.existing.id
 
   ingress {
     from_port   = 22

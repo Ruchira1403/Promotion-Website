@@ -85,16 +85,40 @@ pipeline {
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
                     ]) {
-                        bat """
-                            terraform init -input=false
-                            terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
-                        """
-                        
                         script {
-                            env.EC2_IP = bat(
-                                script: 'terraform output -raw public_ip',
-                                returnStdout: true
-                            ).trim()
+                            def maxRetries = 3
+                            def retryCount = 0
+                            def success = false
+                            
+                            while (!success && retryCount < maxRetries) {
+                                try {
+                                    // Try to destroy any existing infrastructure
+                                    bat """
+                                        terraform init -input=false
+                                        terraform destroy -auto-approve || exit 0
+                                    """
+                                    
+                                    // Apply new infrastructure
+                                    bat """
+                                        terraform init -input=false
+                                        terraform apply -auto-approve -parallelism=${TERRAFORM_PARALLELISM}
+                                    """
+                                    
+                                    env.EC2_IP = bat(
+                                        script: 'terraform output -raw public_ip',
+                                        returnStdout: true
+                                    ).trim()
+                                    
+                                    success = true
+                                } catch (Exception e) {
+                                    retryCount++
+                                    if (retryCount >= maxRetries) {
+                                        error "Failed to apply Terraform configuration after ${maxRetries} attempts: ${e.message}"
+                                    }
+                                    echo "Attempt ${retryCount} failed, retrying..."
+                                    sleep(30) // Wait 30 seconds before retrying
+                                }
+                            }
                         }
                     }
                 }
