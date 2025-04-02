@@ -1,4 +1,4 @@
-Tharuka Madhuwantha, [4/1/2025 8:54 PM]
+
 pipeline {
     agent any
     environment {
@@ -91,7 +91,7 @@ pipeline {
                             // Use the full path to Git executable in WSL
                             def gitCommitHash = bat(
 
-Tharuka Madhuwantha, [4/1/2025 8:54 PM]
+T
 script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
                                 returnStdout: true
                             ).trim().readLines().last()
