@@ -165,18 +165,68 @@ pipeline {
                 }
             }
         }
-        
-        stage('Ansible Deployment') {
+        stage('Prepare SSH Key') {
+            steps {
+                script {
+                    // Create directories if they don't exist
+                    bat '''
+                        if not exist ansible mkdir ansible
+                        wsl mkdir -p /home/myuser/.ssh
+                    '''
+                    
+                    // Set proper permissions on existing key
+                    bat '''
+                        wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
+                        wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
+                    '''
+                    
+                    // Verify SSH connection
+                    bat '''
+                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
+                    '''
+                }
+            }
+        }
+
+         stage(' Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    script {
-                        if (!env.EC2_IP?.trim()) { error "EC2 IP not set. Cannot deploy." }
-                        bat "wsl ansible-playbook -i inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/key.pem"
+                    withCredentials([
+                        usernamePassword(credentialsId: 'dockerhub-cred',
+                                     usernameVariable: 'DOCKER_HUB_USERNAME',
+                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
+                    ]) {
+                        script {
+                            // Use the full path to Git executable in WSL
+                            def gitCommitHash = bat(
+                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
+                                returnStdout: true
+                            ).trim().readLines().last()
+                            
+                            // Create inventory file
+                            writeFile file: 'temp_inventory.ini', text: """[ec2]
+${EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
+
+[ec2:vars]
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+"""
+                            // Run Ansible playbook with corrected command format
+                            def result = bat(
+                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
+                                returnStatus: true
+                            )
+                            
+                            if (result != 0) {
+                                error "Ansible deployment failed with exit code ${result}"
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
     
     post {
         always {
