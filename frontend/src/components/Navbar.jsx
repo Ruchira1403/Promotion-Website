@@ -57,7 +57,7 @@ const Navbar = () => {
                 isScrolled ? "text-gray-800" : "text-white"
               }`}
             >
-              Dairy Products
+              Dairy 
             </span>
           </Link>
 
