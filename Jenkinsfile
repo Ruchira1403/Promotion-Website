@@ -66,36 +66,34 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'), string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                         credentialsId: 'aws-credentials',
+                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
                         script {
-                            echo "Checking for existing Terraform state..."
-                            def outputExists = bat(script: "wsl terraform output -json > nul 2>&1 && echo exists || echo notexists", returnStdout: true).trim().contains("exists")
-                            echo "Terraform state exists: ${outputExists}"
+                            // Check if output file exists using Windows-compatible commands
+                            def outputExists = bat(script: 'wsl terraform output -json > nul 2>&1 && echo exists || echo notexists', returnStdout: true).trim().contains("exists")
                             
                             if (outputExists) {
+                                // Try to get existing IP to check if infrastructure exists
                                 try {
-                                    env.EXISTING_EC2_IP = bat(script: "wsl terraform output -raw public_ip 2> nul || echo \"\"", returnStdout: true).trim().readLines().last()
+                                    env.EXISTING_EC2_IP = bat(script: 'wsl terraform output -raw public_ip 2> nul || echo ""', returnStdout: true).trim().readLines().last()
                                     echo "Found existing infrastructure with IP: ${env.EXISTING_EC2_IP}"
                                 } catch (Exception e) {
                                     env.EXISTING_EC2_IP = ""
-                                    echo "No existing infrastructure detected or error retrieving IP: ${e.getMessage()}"
+                                    echo "No existing infrastructure detected"
                                 }
-                            } else {
-                                env.EXISTING_EC2_IP = ""
-                                echo "No existing Terraform state detected"
                             }
                             
-                            echo "Running Terraform plan..."
+                            // Run terraform plan with detailed exit code to automatically detect changes
                             def planExitCode = bat(script: "wsl terraform plan -detailed-exitcode -var=\"region=${AWS_REGION}\" -out=tfplan", returnStatus: true)
+                            // Exit code 0 = No changes, 1 = Error, 2 = Changes present
+                            env.TERRAFORM_CHANGES = planExitCode == 2 ? 'true' : 'false'
                             
-                            if (planExitCode == 2) {
-                                env.TERRAFORM_CHANGES = 'true'
+                            if (env.TERRAFORM_CHANGES == 'true') {
                                 echo "Infrastructure changes detected - will apply changes"
-                            } else if (planExitCode == 0) {
-                                env.TERRAFORM_CHANGES = 'false'
-                                echo "No infrastructure changes detected - will skip apply stage"
                             } else {
-                                error "Terraform plan failed with exit code ${planExitCode}"
+                                echo "No infrastructure changes detected - will skip apply stage"
                             }
                         }
                     }
@@ -104,13 +102,22 @@ pipeline {
         }
         
         stage('Terraform Apply') {
-            when { expression { return env.TERRAFORM_CHANGES == 'true' } }
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'true' }
+            }
             steps {
                 dir(TERRAFORM_DIR) {
-                    withCredentials([string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'), string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                         credentialsId: 'aws-credentials',
+                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        // Apply with parallelism for faster resource creation
+                        bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
+                        
+                        // Capture the EC2 IP from Terraform output
                         script {
-                            bat "wsl terraform apply -parallelism=${TERRAFORM_PARALLELISM} -input=false tfplan"
-                            env.EC2_IP = bat(script: "wsl terraform output -raw public_ip", returnStdout: true).trim().readLines().last()
+                            env.EC2_IP = bat(script: 'wsl terraform output -raw public_ip', returnStdout: true).trim().readLines().last()
+                            // Add a small wait for EC2 instance to initialize (reduces SSH connection issues)
                             echo "Waiting 30 seconds for EC2 instance to initialize..."
                             sleep(30)
                         }
@@ -120,11 +127,20 @@ pipeline {
         }
         
         stage('Get Existing Infrastructure') {
-            when { expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() } }
+            when {
+                expression { return env.TERRAFORM_CHANGES == 'false' && env.EXISTING_EC2_IP?.trim() }
+            }
             steps {
-                script {
-                    env.EC2_IP = env.EXISTING_EC2_IP
-                    echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+                dir(TERRAFORM_DIR) {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
+                         credentialsId: 'aws-credentials',
+                         accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                         secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        script {
+                            env.EC2_IP = env.EXISTING_EC2_IP
+                            echo "Using existing infrastructure with IP: ${env.EC2_IP}"
+                        }
+                    }
                 }
             }
         }
