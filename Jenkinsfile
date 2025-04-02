@@ -181,15 +181,37 @@ pipeline {
     post {
         always {
             script {
-                bat 'docker logout'
-                cleanWs(
-                    deleteDirs: true,
-                    patterns: [
-                        [pattern: '**/.git/**', type: 'EXCLUDE'],
-                        [pattern: 'terraform/terraform.tfstate', type: 'EXCLUDE'],
-                        [pattern: 'terraform/terraform.tfstate.backup', type: 'EXCLUDE']
-                    ]
-                )
+                try {
+                    // First try to logout from Docker
+                    bat 'docker logout'
+                    
+                    // Try to clean up workspace with more specific patterns
+                    cleanWs(
+                        deleteDirs: true,
+                        patterns: [
+                            [pattern: '**/.git/**', type: 'EXCLUDE'],
+                            [pattern: 'terraform/terraform.tfstate', type: 'EXCLUDE'],
+                            [pattern: 'terraform/terraform.tfstate.backup', type: 'EXCLUDE'],
+                            [pattern: 'ansible/inventory.ini', type: 'EXCLUDE'],
+                            [pattern: 'ansible/deploy.yml', type: 'EXCLUDE']
+                        ],
+                        notMatch: true
+                    )
+                    
+                    // If the above fails, try to clean up specific directories
+                    try {
+                        bat '''
+                            if exist frontend\\node_modules rmdir /s /q frontend\\node_modules
+                            if exist backend\\node_modules rmdir /s /q backend\\node_modules
+                            if exist .terraform rmdir /s /q .terraform
+                            if exist terraform\\.terraform rmdir /s /q terraform\\.terraform
+                        '''
+                    } catch (Exception e) {
+                        echo "Warning: Failed to clean up some directories: ${e.getMessage()}"
+                    }
+                } catch (Exception e) {
+                    echo "Warning: Workspace cleanup encountered issues: ${e.getMessage()}"
+                }
             }
         }
         success {
@@ -197,6 +219,14 @@ pipeline {
         }
         failure {
             echo "Deployment failed!"
+            // Add more detailed error reporting
+            script {
+                if (currentBuild.result == 'FAILURE') {
+                    echo "Pipeline failed at stage: ${currentBuild.currentStage}"
+                    echo "Build number: ${currentBuild.number}"
+                    echo "Build URL: ${currentBuild.absoluteUrl}"
+                }
+            }
         }
     }
 }
