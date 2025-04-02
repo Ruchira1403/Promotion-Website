@@ -20,6 +20,27 @@ pipeline {
             }
         }
         
+        stage('Test') {
+            steps {
+                dir('frontend') {
+                    script {
+                        // Install dependencies
+                        bat 'npm install'
+                        // Run tests
+                        bat 'npm test'
+                    }
+                }
+                dir('backend') {
+                    script {
+                        // Install dependencies
+                        bat 'npm install'
+                        // Run tests
+                        bat 'npm test'
+                    }
+                }
+            }
+        }
+        
         stage('Build Docker Images') {
             steps {
                 script {
@@ -150,28 +171,7 @@ pipeline {
                 dir(ANSIBLE_DIR) {
                     script {
                         if (!env.EC2_IP?.trim()) { error "EC2 IP not set. Cannot deploy." }
-                        
-                        bat """
-                            wsl chmod 600 ${WSL_SSH_KEY}
-                            wsl ls -la ${WSL_SSH_KEY}
-                        """
-                        
-                        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred', usernameVariable: 'DOCKER_HUB_USERNAME', passwordVariable: 'DOCKER_HUB_PASSWORD')]) {
-                            def gitCommitHash = bat(script: "\"${env.GIT_PATH}\" rev-parse --short HEAD", returnStdout: true).trim().readLines().last()
-                            
-                            writeFile file: 'inventory.ini', text: """[ec2]
-${env.EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
-
-[ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=60'
-"""
-                            def result = bat(script: "wsl ansible-playbook -i inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"docker_hub_username=${DOCKER_HUB_USERNAME} git_commit_hash=${gitCommitHash}\" -vvv", returnStatus: true)
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
-                            }
-                        }
+                        bat "wsl ansible-playbook -i inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/key.pem"
                     }
                 }
             }
