@@ -2,10 +2,11 @@ pipeline {
     agent any
     environment {
         ANSIBLE_DIR = 'ansible'
-        EC2_IP = '13.218.143.183'
+        EC2_IP = '13.218.143.183'  // Consider using a domain name or parameterizing this
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
-        GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'  // Add the full path to git executable
+        GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
+        SSH_TIMEOUT = '30'  // Set a timeout value for SSH connections
     }
     
     stages {
@@ -70,10 +71,26 @@ pipeline {
                         wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
                     '''
                     
-                    // Verify SSH connection
-                    bat '''
-                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
-                    '''
+                    // Verify EC2 instance is reachable
+                    echo "Verifying EC2 instance connectivity..."
+                    def pingResult = bat(
+                        script: "ping -n 2 -w 5000 ${EC2_IP}",
+                        returnStatus: true
+                    )
+                    if (pingResult != 0) {
+                        echo "Warning: EC2 instance at ${EC2_IP} is not responding to ping. This may not be an issue if ICMP is blocked."
+                    }
+                    
+                    // Verify SSH connection with timeout
+                    echo "Testing SSH connection with timeout..."
+                    def sshResult = bat(
+                        script: "wsl ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${SSH_TIMEOUT} -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@${EC2_IP} \"echo SSH connection successful\"",
+                        returnStatus: true
+                    )
+                    
+                    if (sshResult != 0) {
+                        error "SSH connection failed. Please verify:\n1. EC2 instance is running\n2. Security group allows SSH (port 22) from this IP\n3. IP address is correct\n4. Network/firewall allows outbound SSH connections"
+                    }
                 }
             }
         }
