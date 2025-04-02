@@ -165,103 +165,31 @@ pipeline {
                 }
             }
         }
-        stage('Prepare SSH Key') {
-            steps {
-                script {
-                    // Create directories if they don't exist
-                    bat '''
-                        if not exist ansible mkdir ansible
-                        wsl mkdir -p /home/myuser/.ssh
-                    '''
-                    
-                    // Set proper permissions on existing key
-                    bat '''
-                        wsl chmod 600 /home/myuser/.ssh/Promotion-Website.pem
-                        wsl ls -la /home/myuser/.ssh/Promotion-Website.pem
-                    '''
-                    
-                    // Verify SSH connection
-                    bat '''
-                        wsl ssh -o StrictHostKeyChecking=no -i /home/myuser/.ssh/Promotion-Website.pem ubuntu@13.218.143.183 "echo SSH connection successful"
-                    '''
-                }
-            }
-        }
-
-         stage(' Ansible Deployment') {
+        
+        stage('Ansible Deployment') {
             steps {
                 dir(ANSIBLE_DIR) {
-                    withCredentials([
-                        usernamePassword(credentialsId: 'dockerhub-cred',
-                                     usernameVariable: 'DOCKER_HUB_USERNAME',
-                                     passwordVariable: 'DOCKER_HUB_PASSWORD')
-                    ]) {
-                        script {
-                            // Use the full path to Git executable in WSL
-                            def gitCommitHash = bat(
-                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
-                                returnStdout: true
-                            ).trim().readLines().last()
-                            
-                            // Create inventory file
-                            writeFile file: 'temp_inventory.ini', text: """[ec2]
-${EC2_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${WSL_SSH_KEY}
-
-[ec2:vars]
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-"""
-                            // Run Ansible playbook with corrected command format
-                            def result = bat(
-                                script: "wsl ansible-playbook -i temp_inventory.ini deploy.yml -u ubuntu --private-key ${WSL_SSH_KEY} -e \"DOCKER_HUB_USERNAME=${DOCKER_HUB_USERNAME} GIT_COMMIT_HASH=${gitCommitHash}\" -vvv",
-                                returnStatus: true
-                            )
-                            
-                            if (result != 0) {
-                                error "Ansible deployment failed with exit code ${result}"
-                            }
-                        }
+                    script {
+                        if (!env.EC2_IP?.trim()) { error "EC2 IP not set. Cannot deploy." }
+                        bat "wsl ansible-playbook -i inventory.ini deploy.yml -u ubuntu --private-key /home/myuser/.ssh/key.pem"
                     }
                 }
             }
         }
     }
-
     
     post {
         always {
             script {
-                try {
-                    // First try to logout from Docker
-                    bat 'docker logout'
-                    
-                    // Try to clean up workspace with more specific patterns
-                    cleanWs(
-                        deleteDirs: true,
-                        patterns: [
-                            [pattern: '**/.git/**', type: 'EXCLUDE'],
-                            [pattern: 'terraform/terraform.tfstate', type: 'EXCLUDE'],
-                            [pattern: 'terraform/terraform.tfstate.backup', type: 'EXCLUDE'],
-                            [pattern: 'ansible/inventory.ini', type: 'EXCLUDE'],
-                            [pattern: 'ansible/deploy.yml', type: 'EXCLUDE']
-                        ],
-                        notMatch: true
-                    )
-                    
-                    // If the above fails, try to clean up specific directories
-                    try {
-                        bat '''
-                            if exist frontend\\node_modules rmdir /s /q frontend\\node_modules
-                            if exist backend\\node_modules rmdir /s /q backend\\node_modules
-                            if exist .terraform rmdir /s /q .terraform
-                            if exist terraform\\.terraform rmdir /s /q terraform\\.terraform
-                        '''
-                    } catch (Exception e) {
-                        echo "Warning: Failed to clean up some directories: ${e.getMessage()}"
-                    }
-                } catch (Exception e) {
-                    echo "Warning: Workspace cleanup encountered issues: ${e.getMessage()}"
-                }
+                bat 'docker logout'
+                cleanWs(
+                    deleteDirs: true,
+                    patterns: [
+                        [pattern: '**/.git/**', type: 'EXCLUDE'],
+                        [pattern: 'terraform/terraform.tfstate', type: 'EXCLUDE'],
+                        [pattern: 'terraform/terraform.tfstate.backup', type: 'EXCLUDE']
+                    ]
+                )
             }
         }
         success {
@@ -269,14 +197,6 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no'
         }
         failure {
             echo "Deployment failed!"
-            // Add more detailed error reporting
-            script {
-                if (currentBuild.result == 'FAILURE') {
-                    echo "Pipeline failed at stage: ${currentBuild.currentStage}"
-                    echo "Build number: ${currentBuild.number}"
-                    echo "Build URL: ${currentBuild.absoluteUrl}"
-                }
-            }
         }
     }
 }
