@@ -2,7 +2,7 @@ pipeline {
     agent any
     environment {
         ANSIBLE_DIR = 'ansible'
-        EC2_IP = '13.218.143.183'  // Consider using a domain name or parameterizing this
+        EC2_IP = '18.215.167.78'  // Consider using a domain name or parameterizing this
         NO_PROXY = '*.docker.io,registry-1.docker.io'
         WSL_SSH_KEY = '/home/myuser/.ssh/Promotion-Website.pem'
         GIT_PATH = 'C:\\Program Files\\Git\\bin\\git.exe'
@@ -105,10 +105,11 @@ pipeline {
                     ]) {
                         script {
                             // Use the full path to Git executable in WSL
-                            def gitCommitHash = bat(
-                                script: "wsl \"${env.GIT_PATH}\" rev-parse --short HEAD",
-                                returnStdout: true
-                            ).trim().readLines().last()
+                            // Use Git directly within WSL
+def gitCommitHash = bat(
+    script: "wsl git rev-parse --short HEAD",
+    returnStdout: true
+).trim().readLines().last()
                             
                             // Create inventory file
                             writeFile file: 'temp_inventory.ini', text: """[ec2]
