@@ -70,12 +70,12 @@ router.post("/login", async (req, res) => {
     });
 
     res.json({
-      message: "Login successful",
       token,
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
+        role: user.role // This is important for the admin check
       },
     });
   } catch (error) {

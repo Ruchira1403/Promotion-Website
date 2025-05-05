@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import api from "../../utils/api";
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -8,39 +9,53 @@ const Login = () => {
     password: "",
   });
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
 
+  const from = location.state?.from?.pathname || "/";
+
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+    setFormData({ ...formData, [name]: value });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:4000/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Something went wrong");
-      }
-
-      login(data.user, data.token);
-      navigate("/");
+      const response = await api.post("/auth/login", formData);
+      
+      console.log("Login response:", response.data);
+      
+      // Make sure user has the role property
+      const userData = {
+        ...response.data.user,
+        role: response.data.user.role || "user" // Fallback to "user" if role is missing
+      };
+      
+      // Store user data and token
+      login(userData, response.data.token);
+      
+      // Add delay to ensure state is updated before redirection
+      setTimeout(() => {
+        if (userData.role === "admin") {
+          console.log("Redirecting to admin dashboard");
+          navigate("/admin");
+        } else {
+          console.log("Redirecting to:", from);
+          navigate(from);
+        }
+        setLoading(false);
+      }, 100);
+      
     } catch (err) {
-      setError(err.message);
+      console.error("Login error:", err);
+      setError(err.response?.data?.message || "Failed to login");
+      setLoading(false);
     }
   };
 
@@ -98,8 +113,9 @@ const Login = () => {
             <button
               type="submit"
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              disabled={loading}
             >
-              Sign in
+              {loading ? "Signing in..." : "Sign in"}
             </button>
           </div>
         </form>
