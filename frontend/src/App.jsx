@@ -16,6 +16,14 @@ import Login from "./components/Pages/Login";
 import SignUp from "./components/Pages/SignUp";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./context/AuthContext";
+import Cart from "./components/Pages/Cart";
+import Checkout from "./components/Pages/Checkout";
+import Orders from "./components/Pages/Orders";
+import AdminDashboard from "./components/Pages/Admin/Dashboard";
+import AdminProductList from "./components/Pages/Admin/ProductList";
+import AdminProductForm from "./components/Pages/Admin/ProductForm";
+import AdminLayout from "./components/Admin/AdminLayout";
+import AdminRoute from "./components/AdminRoute";
 import "./App.css";
 
 // Define the Home component
@@ -83,6 +91,30 @@ const router = createBrowserRouter(
           element: <SignUp />,
         },
         {
+          path: "cart",
+          element: (
+            <ProtectedRoute>
+              <Cart />
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "checkout",
+          element: (
+            <ProtectedRoute>
+              <Checkout />
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "orders",
+          element: (
+            <ProtectedRoute>
+              <Orders />
+            </ProtectedRoute>
+          ),
+        },
+        {
           path: "profile",
           element: (
             <ProtectedRoute>
@@ -93,6 +125,32 @@ const router = createBrowserRouter(
         {
           path: "*",
           element: <NotFound />,
+        },
+      ],
+    },
+    {
+      path: "/admin",
+      element: (
+        <AdminRoute>
+          <AdminLayout />
+        </AdminRoute>
+      ),
+      children: [
+        {
+          path: "",
+          element: <AdminDashboard />,
+        },
+        {
+          path: "products",
+          element: <AdminProductList />,
+        },
+        {
+          path: "products/add",
+          element: <AdminProductForm />,
+        },
+        {
+          path: "products/edit/:id",
+          element: <AdminProductForm />,
         },
       ],
     },

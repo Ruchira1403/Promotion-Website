@@ -1,4 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 
 const AuthContext = createContext(null);
 
@@ -36,3 +37,14 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => useContext(AuthContext);
+
+export const AdminRoute = ({ children }) => {
+  const { user } = useAuth();
+  const location = useLocation();
+
+  if (!user || user.role !== 'admin') {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+};

@@ -1,86 +1,89 @@
-import React from 'react';
-import Slider from 'react-slick';
-import 'slick-carousel/slick/slick.css';
-import 'slick-carousel/slick/slick-theme.css';
-import img1 from '../assets/Products/img1.png';
-import img2 from '../assets/Products/img2.png';
-import img3 from '../assets/Products/img3.png';
-import img4 from '../assets/Products/img4.png';
-import img5 from '../assets/Products/img5.png';
-import img6 from '../assets/Products/img6.png';
-import img7 from '../assets/Products/img7.png';
+import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import api from "../utils/api";
 
-const products = [
-  { image: img1, name: 'Curd 950ml', size: '950ml' },
-  { image: img2, name: 'Strawberry Drinking Yoghurt', size: '200 ml' },
-  { image: img3, name: 'Mango Drinking Yoghurt', size: '200 ml' },
-  { image: img4, name: 'Orange Flavoured Drink', size: '200 ml' },
-  { image: img5, name: 'Vanilla Drinking Yoghurt', size: '200 ml' },
-  { image: img6, name: 'Chocolate Drinking Yoghurt', size: '200 ml' },
-  { image: img7, name: 'Pineapple Flavoured Drink', size: '200 ml' },
-];
+const Products = () => {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-const ProductShowcase = () => {
-  const settings = {
-    dots: true,
-    infinite: true,
-    speed: 500,
-    slidesToShow: 4,
-    slidesToScroll: 1,
-    centerMode: true,
-    centerPadding: '20px',
-    responsive: [
-      {
-        breakpoint: 1024,
-        settings: {
-          slidesToShow: 3,
-        },
-      },
-      {
-        breakpoint: 768,
-        settings: {
-          slidesToShow: 2,
-          centerPadding: '10px',
-        },
-      },
-      {
-        breakpoint: 640,
-        settings: {
-          slidesToShow: 1,
-          centerPadding: '10px',
-        },
-      },
-    ],
+  useEffect(() => {
+    fetchFeaturedProducts();
+  }, []);
+
+  const fetchFeaturedProducts = async () => {
+    try {
+      const response = await api.get("/products");
+      // Get first 4 products for homepage display
+      setProducts(response.data.slice(0, 4));
+    } catch (err) {
+      setError("Failed to load products");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  return (
-    <div className="bg-blue-500 p-10">
-      <h1 className="text-white text-2xl font-bold text-center mb-8">Our Products</h1>
-      
-      <Slider {...settings} className="slick-slider">
-        {products.map((product, index) => (
-          <div key={index} className="bg-white rounded-lg shadow-lg p-4 flex flex-col items-center mx-4">
-            <div className="w-full h-36 flex items-center justify-center mb-4">
-              <img src={product.image} alt={product.name} className="max-h-full  w-[20] object-contain" />
-            </div>
-            <h2 className="text-lg font-semibold text-center">{product.name}</h2>
-            <p className="text-gray-600 text-center">{product.size}</p>
-            <div className="text-center mt-4">
-              <button className="bg-blue-600 text-white py-2 px-4 rounded-full">
-                View More
-              </button>
-            </div>
+  if (loading) {
+    return (
+      <section className="py-16 bg-gray-50">
+        <div className="container mx-auto">
+          <h2 className="text-3xl font-bold text-center mb-12">Our Products</h2>
+          <div className="flex justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
           </div>
-        ))}
-      </Slider>
-      
-      <div className="text-center mt-8">
-        <button className="bg-red-500 text-white py-2 px-4 rounded-full">
-          View All Products
-        </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="py-16 bg-gray-50">
+        <div className="container mx-auto">
+          <h2 className="text-3xl font-bold text-center mb-12">Our Products</h2>
+          <div className="text-center text-red-600">{error}</div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="py-16 bg-gray-50">
+      <div className="container mx-auto px-4">
+        <h2 className="text-3xl font-bold text-center mb-12">Our Products</h2>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+          {products.map((product) => (
+            <div key={product._id} className="bg-white rounded-lg shadow-md overflow-hidden transform transition duration-300 hover:scale-105">
+              <img
+                src={`http://localhost:4000${product.imageUrl}`}
+                alt={product.name}
+                className="w-full h-48 object-cover"
+              />
+              <div className="p-6">
+                <h3 className="font-bold text-lg mb-2">{product.name}</h3>
+                <div className="flex justify-between items-center mt-4">
+                  <span className="text-xl font-bold text-blue-600">
+                    ${product.price.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        
+        <div className="text-center mt-12">
+          <Link
+            to="/products"
+            className="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 inline-block"
+          >
+            View All Products
+          </Link>
+        </div>
       </div>
-    </div>
+    </section>
   );
 };
 
-export default ProductShowcase;
+export default Products;
