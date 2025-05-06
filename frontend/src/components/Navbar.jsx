@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Logo from "../assets/Products/logo.png";
+import { FaGoogle, FaGithub } from "react-icons/fa";
 
 const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -23,6 +24,10 @@ const Navbar = () => {
     setIsMenuOpen(false);
   };
 
+  const handleSocialLogin = (provider) => {
+    window.location.href = `http://localhost:4000/api/auth/${provider}`;
+  };
+
   const navLinks = [
     { path: "/", text: "HOME" },
     { path: "/aboutus", text: "ABOUT US" },
@@ -31,6 +36,14 @@ const Navbar = () => {
     { path: "/contactus", text: "CONTACT US" },
     { path: "/careers", text: "CAREERS" },
   ];
+
+  // Add this conditional link for orders and profile - only shown when user is logged in
+  const userLinks = user
+    ? [
+        { path: "/orders", text: "My Orders" },
+        { path: "/profile", text: "My Profile" },
+      ]
+    : [];
 
   const isActive = (path) => {
     return location.pathname === path;
@@ -57,7 +70,7 @@ const Navbar = () => {
                 isScrolled ? "text-gray-800" : "text-white"
               }`}
             >
-              Dairy 
+              Dairy
             </span>
           </Link>
 
@@ -87,10 +100,52 @@ const Navbar = () => {
               </Link>
             ))}
 
-            {/* Add this Cart link */}
-            <Link to="/cart" className="text-gray-600 hover:text-blue-600 relative">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+            {/* User-specific links */}
+            {user &&
+              userLinks.map((link) => (
+                <Link
+                  key={link.path}
+                  to={link.path}
+                  className={`relative px-3 py-2 text-sm font-medium transition-colors duration-200
+                  ${
+                    isScrolled
+                      ? isActive(link.path)
+                        ? "text-green-600"
+                        : "text-gray-600 hover:text-green-600"
+                      : "text-white hover:text-green-200"
+                  }
+                  group
+                `}
+                >
+                  {link.text}
+                  <span
+                    className={`absolute bottom-0 left-0 w-full h-0.5 transform scale-x-0 transition-transform duration-200 group-hover:scale-x-100
+                    ${isScrolled ? "bg-green-600" : "bg-white"}
+                  `}
+                  />
+                </Link>
+              ))}
+
+            {/* Cart Link */}
+            <Link
+              to="/cart"
+              className={`text-${
+                isScrolled ? "gray-600" : "white"
+              } hover:text-${isScrolled ? "green-600" : "green-200"} relative`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
+                />
               </svg>
             </Link>
 
@@ -179,6 +234,25 @@ const Navbar = () => {
                 </Link>
               ))}
 
+              {/* User-specific links */}
+              {user &&
+                userLinks.map((link) => (
+                  <Link
+                    key={link.path}
+                    to={link.path}
+                    onClick={() => setIsMenuOpen(false)}
+                    className={`block px-3 py-2 rounded-md text-base font-medium
+                      ${
+                        isActive(link.path)
+                          ? "bg-green-100 text-green-600"
+                          : "text-gray-600 hover:bg-green-50 hover:text-green-600"
+                      }
+                    `}
+                  >
+                    {link.text}
+                  </Link>
+                ))}
+
               {/* Mobile Auth Buttons */}
               <div className="mt-4 space-y-2 pb-3">
                 {user ? (
@@ -209,6 +283,27 @@ const Navbar = () => {
                     >
                       Sign Up
                     </Link>
+                    {/* Add social login buttons for mobile */}
+                    <div className="flex justify-center space-x-4 mt-2">
+                      <button
+                        onClick={() => {
+                          handleSocialLogin('google');
+                          setIsMenuOpen(false);
+                        }}
+                        className="p-2 bg-red-500 text-white rounded-full hover:bg-red-600"
+                      >
+                        <FaGoogle />
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleSocialLogin('github');
+                          setIsMenuOpen(false);
+                        }}
+                        className="p-2 bg-gray-800 text-white rounded-full hover:bg-gray-900"
+                      >
+                        <FaGithub />
+                      </button>
+                    </div>
                   </>
                 )}
               </div>

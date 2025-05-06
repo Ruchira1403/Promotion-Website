@@ -10,7 +10,6 @@ export const authMiddleware = async (req, res, next) => {
     }
     
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // Make sure this matches what you store in the token during login
     const user = await User.findById(decoded.userId);
     
     if (!user) {

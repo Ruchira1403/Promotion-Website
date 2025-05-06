@@ -161,7 +161,7 @@ const Cart = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        ${item.product.price.toFixed(2)}
+                        Rs. {item.product.price.toFixed(2)}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -221,7 +221,7 @@ const Cart = () => {
               Continue Shopping
             </Link>
             <div className="text-lg font-semibold">
-              Total Price: ${totalPrice.toFixed(2)}
+              Total Price: Rs. {totalPrice.toFixed(2)}
             </div>
           </div>
 

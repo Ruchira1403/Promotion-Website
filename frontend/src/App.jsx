@@ -24,6 +24,8 @@ import AdminProductList from "./components/Pages/Admin/ProductList";
 import AdminProductForm from "./components/Pages/Admin/ProductForm";
 import AdminLayout from "./components/Admin/AdminLayout";
 import AdminRoute from "./components/AdminRoute";
+import SocialAuthCallback from "./components/SocialAuthCallback";
+import Profile from "./components/Pages/Profile";
 import "./App.css";
 
 // Define the Home component
@@ -118,9 +120,13 @@ const router = createBrowserRouter(
           path: "profile",
           element: (
             <ProtectedRoute>
-              <div>Profile Page</div>
+              <Profile />
             </ProtectedRoute>
           ),
+        },
+        {
+          path: "social-auth-callback",
+          element: <SocialAuthCallback />,
         },
         {
           path: "*",

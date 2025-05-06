@@ -65,7 +65,7 @@ const Products = () => {
                 <h3 className="font-bold text-lg mb-2">{product.name}</h3>
                 <div className="flex justify-between items-center mt-4">
                   <span className="text-xl font-bold text-blue-600">
-                    ${product.price.toFixed(2)}
+                    Rs.{product.price.toFixed(2)}
                   </span>
                 </div>
               </div>

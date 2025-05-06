@@ -273,12 +273,12 @@ const Checkout = () => {
                         <div className="ml-4">
                           <p className="text-sm font-medium text-gray-900">{item.product.name}</p>
                           <p className="text-sm text-gray-500">
-                            ${item.product.price.toFixed(2)} x {item.quantity}
+                            Rs.{item.product.price.toFixed(2)} x {item.quantity}
                           </p>
                         </div>
                       </div>
                       <p className="text-sm font-medium text-gray-900">
-                        ${(item.product.price * item.quantity).toFixed(2)}
+                        Rs.{(item.product.price * item.quantity).toFixed(2)}
                       </p>
                     </div>
                   ))}
@@ -287,7 +287,7 @@ const Checkout = () => {
                 <div className="mt-4 space-y-2">
                   <div className="flex justify-between">
                     <p className="text-gray-600">Subtotal</p>
-                    <p className="font-medium">${totalPrice.toFixed(2)}</p>
+                    <p className="font-medium">Rs.{totalPrice.toFixed(2)}</p>
                   </div>
                   <div className="flex justify-between">
                     <p className="text-gray-600">Shipping</p>
@@ -295,8 +295,25 @@ const Checkout = () => {
                   </div>
                   <div className="flex justify-between border-t border-gray-200 pt-2 mt-2">
                     <p className="text-lg font-bold">Total</p>
-                    <p className="text-lg font-bold">${totalPrice.toFixed(2)}</p>
+                    <p className="text-lg font-bold">Rs.{totalPrice.toFixed(2)}</p>
                   </div>
+                </div>
+                
+                <div className="mt-6">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/orders')}
+                    className="w-full bg-gray-100 text-gray-800 py-3 px-4 rounded-md font-medium hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 mb-3"
+                  >
+                    Go to My Orders
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/cart')}
+                    className="w-full bg-gray-100 text-gray-800 py-3 px-4 rounded-md font-medium hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                  >
+                    Return to Cart
+                  </button>
                 </div>
               </>
             )}

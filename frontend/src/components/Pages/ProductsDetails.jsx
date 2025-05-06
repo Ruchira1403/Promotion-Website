@@ -145,7 +145,7 @@ const ProductsDetails = () => {
                 <p className="text-gray-500 text-sm mb-2">{product.category}</p>
                 <div className="flex justify-between items-center">
                   <span className="text-xl font-bold text-blue-600">
-                    ${product.price.toFixed(2)}
+                    Rs.{product.price.toFixed(2)}
                   </span>
                   <button
                     onClick={() => handleAddToCart(product._id)}
