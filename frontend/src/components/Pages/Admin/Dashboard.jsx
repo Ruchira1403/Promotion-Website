@@ -9,6 +9,11 @@ const AdminDashboard = () => {
     recentOrders: [],
     totalSales: 0
   });
+  const [salesStats, setSalesStats] = useState({
+    totalSales: 0,
+    recentSales: [],
+    salesByCategory: []
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -26,7 +31,17 @@ const AdminDashboard = () => {
       }
     };
 
+    const fetchSalesData = async () => {
+      try {
+        const response = await api.get('/admin/sales');
+        setSalesStats(response.data);
+      } catch (err) {
+        console.error('Error fetching sales data:', err);
+      }
+    };
+
     fetchDashboardData();
+    fetchSalesData();
   }, []);
 
   if (loading) {
@@ -95,6 +110,8 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
+
+     
 
       {/* Recent Orders */}
       <div className="bg-white rounded-lg shadow-md overflow-hidden">

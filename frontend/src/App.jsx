@@ -26,6 +26,8 @@ import AdminLayout from "./components/Admin/AdminLayout";
 import AdminRoute from "./components/AdminRoute";
 import SocialAuthCallback from "./components/SocialAuthCallback";
 import Profile from "./components/Pages/Profile";
+import OrderManagement from "./components/Pages/Admin/OrderManagement";
+import OrderDetail from "./components/Pages/Admin/OrderDetail";
 import "./App.css";
 
 // Define the Home component
@@ -157,6 +159,22 @@ const router = createBrowserRouter(
         {
           path: "products/edit/:id",
           element: <AdminProductForm />,
+        },
+        {
+          path: "orders",
+          element: (
+            <AdminRoute>
+              <OrderManagement />
+            </AdminRoute>
+          ),
+        },
+        {
+          path: "orders/:orderId",
+          element: (
+            <AdminRoute>
+              <OrderDetail />
+            </AdminRoute>
+          ),
         },
       ],
     },

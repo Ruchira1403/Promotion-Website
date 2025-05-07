@@ -178,21 +178,53 @@ router.get('/orders', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
+// Get single order
+router.get('/orders/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id)
+      .populate('user', 'username email')
+      .populate('items.product');
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    res.json(order);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get sales data for charts
 router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    // Get current date
+    // Calculate total sales from completed orders
+    const completedOrders = await Order.find({ status: 'completed' });
+    const totalSales = completedOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    
+    // Get the current date for filtering
     const now = new Date();
     
-    // Get sales for the last 7 days
-    const last7Days = new Date(now);
-    last7Days.setDate(now.getDate() - 6);
+    // Calculate orders this month (last 30 days)
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(now.getDate() - 30);
+    
+    const monthlyOrders = await Order.countDocuments({
+      createdAt: { $gte: thirtyDaysAgo }
+    });
+    
+    // Get pending orders count
+    const pendingOrders = await Order.countDocuments({ status: 'pending' });
+    
+    // Get sales data for chart (last 7 days)
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 6);
     
     const dailySales = await Order.aggregate([
       {
         $match: {
           status: 'completed',
-          createdAt: { $gte: last7Days }
+          createdAt: { $gte: sevenDaysAgo }
         }
       },
       {
@@ -221,12 +253,15 @@ router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
       {
         $group: {
           _id: "$productDetails.category",
-          sales: { $sum: { $multiply: ["$items.quantity", "$productDetails.price"] } }
+          sales: { $sum: { $multiply: ["$items.quantity", "$items.price"] } }
         }
       }
     ]);
     
     res.json({
+      totalSales,
+      monthlyOrders,
+      pendingOrders,
       dailySales,
       salesByCategory
     });
@@ -250,8 +285,19 @@ router.patch('/orders/:id/status', authMiddleware, adminMiddleware, async (req, 
       return res.status(404).json({ message: 'Order not found' });
     }
     
+    const previousStatus = order.status;
     order.status = status;
     await order.save();
+    
+    // If status was changed to completed, update total sales statistics
+    if (status === 'completed' && previousStatus !== 'completed') {
+      console.log(`Order ${order._id} marked as completed and added to total sales.`);
+    }
+    
+    // If status was changed from completed to something else, update sales statistics again
+    if (previousStatus === 'completed' && status !== 'completed') {
+      console.log(`Order ${order._id} unmarked as completed and removed from total sales.`);
+    }
     
     res.json(order);
   } catch (error) {

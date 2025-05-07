@@ -77,7 +77,8 @@ const Checkout = () => {
           city: formData.city,
           postalCode: formData.postalCode
         },
-        paymentMethod: formData.paymentMethod
+        paymentMethod: formData.paymentMethod,
+        status: "pending"
       };
       
       const response = await api.post("/orders", orderData);
