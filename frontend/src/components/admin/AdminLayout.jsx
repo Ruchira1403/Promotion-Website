@@ -43,7 +43,7 @@ const AdminLayout = () => {
               </Link>
             </li>
             <li>
-              <Link to="/admin/sales" className="flex items-center p-3 rounded-lg hover:bg-blue-700">
+              <Link to="/admin/sales-report" className="flex items-center p-3 rounded-lg hover:bg-blue-700">
                 <FaChartLine className="mr-3" /> Sales Report
               </Link>
             </li>

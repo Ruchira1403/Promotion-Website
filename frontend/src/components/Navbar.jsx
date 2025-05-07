@@ -33,15 +33,14 @@ const Navbar = () => {
     { path: "/aboutus", text: "ABOUT US" },
     { path: "/products", text: "PRODUCTS" },
     { path: "/gallery", text: "GALLERY" },
-    { path: "/contactus", text: "CONTACT US" },
-    { path: "/careers", text: "CAREERS" },
+    
   ];
 
   // Add this conditional link for orders and profile - only shown when user is logged in
   const userLinks = user
     ? [
-        { path: "/orders", text: "My Orders" },
-        { path: "/profile", text: "My Profile" },
+        { path: "/orders", text: "MY ORDERS" },
+        { path: "/profile", text: "MY PROFILE" },
       ]
     : [];
 

@@ -195,7 +195,7 @@ const Cart = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        $
+                        Rs.
                         {(item.product.price * item.quantity).toFixed(2)}
                       </div>
                     </td>

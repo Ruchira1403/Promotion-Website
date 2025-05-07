@@ -195,41 +195,80 @@ router.get('/orders/:id', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
+// Get completed orders
+router.get('/orders/completed', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const completedOrders = await Order.find({ status: 'completed' })
+      .sort({ createdAt: -1 })
+      .populate('user', 'username email')
+      .populate('items.product');
+    
+    res.json(completedOrders);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get sales data for charts
 router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    // Calculate total sales from completed orders
-    const completedOrders = await Order.find({ status: 'completed' });
-    const totalSales = completedOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    const period = req.query.period || 'week'; // Default to week if not specified
     
     // Get the current date for filtering
     const now = new Date();
     
-    // Calculate orders this month (last 30 days)
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(now.getDate() - 30);
+    // Set the start date based on the requested period
+    let startDate;
+    switch (period) {
+      case 'week':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 6);
+        break;
+      case 'month':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 30);
+        break;
+      case 'year':
+        startDate = new Date(now);
+        startDate.setFullYear(now.getFullYear(), 0, 1); // First day of current year
+        break;
+      default:
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 6);
+    }
     
+    // Calculate total sales from completed orders
+    const completedOrders = await Order.find({ 
+      status: 'completed',
+      createdAt: { $gte: startDate }
+    });
+    const totalSales = completedOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    
+    // Count orders in the period
     const monthlyOrders = await Order.countDocuments({
-      createdAt: { $gte: thirtyDaysAgo }
+      createdAt: { $gte: startDate }
     });
     
     // Get pending orders count
     const pendingOrders = await Order.countDocuments({ status: 'pending' });
     
-    // Get sales data for chart (last 7 days)
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 6);
+    // Get sales data for chart by day
+    let dateFormat = "%Y-%m-%d"; // Default daily format
+    
+    if (period === 'year') {
+      dateFormat = "%Y-%m"; // Monthly format for year view
+    }
     
     const dailySales = await Order.aggregate([
       {
         $match: {
           status: 'completed',
-          createdAt: { $gte: sevenDaysAgo }
+          createdAt: { $gte: startDate }
         }
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          _id: { $dateToString: { format: dateFormat, date: "$createdAt" } },
           sales: { $sum: "$totalAmount" },
           count: { $sum: 1 }
         }
@@ -239,7 +278,12 @@ router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
     
     // Get sales by product category
     const salesByCategory = await Order.aggregate([
-      { $match: { status: 'completed' } },
+      { 
+        $match: { 
+          status: 'completed',
+          createdAt: { $gte: startDate }
+        } 
+      },
       { $unwind: "$items" },
       {
         $lookup: {
@@ -255,7 +299,8 @@ router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
           _id: "$productDetails.category",
           sales: { $sum: { $multiply: ["$items.quantity", "$items.price"] } }
         }
-      }
+      },
+      { $sort: { sales: -1 } }
     ]);
     
     res.json({
@@ -263,7 +308,8 @@ router.get('/sales', authMiddleware, adminMiddleware, async (req, res) => {
       monthlyOrders,
       pendingOrders,
       dailySales,
-      salesByCategory
+      salesByCategory,
+      period
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

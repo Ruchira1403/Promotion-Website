@@ -28,6 +28,7 @@ import SocialAuthCallback from "./components/SocialAuthCallback";
 import Profile from "./components/Pages/Profile";
 import OrderManagement from "./components/Pages/Admin/OrderManagement";
 import OrderDetail from "./components/Pages/Admin/OrderDetail";
+import SalesReport from "./components/Pages/Admin/SalesReport";
 import "./App.css";
 
 // Define the Home component
@@ -173,6 +174,14 @@ const router = createBrowserRouter(
           element: (
             <AdminRoute>
               <OrderDetail />
+            </AdminRoute>
+          ),
+        },
+        {
+          path: "sales-report",
+          element: (
+            <AdminRoute>
+              <SalesReport />
             </AdminRoute>
           ),
         },

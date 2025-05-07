@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../../utils/api';
-import { FaBox, FaShoppingCart, FaDollarSign, FaPlus } from 'react-icons/fa';
+import { FaBox, FaShoppingCart, FaDollarSign, FaPlus, FaChartBar } from 'react-icons/fa';
 
 const AdminDashboard = () => {
   const [stats, setStats] = useState({
@@ -64,12 +64,20 @@ const AdminDashboard = () => {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <Link 
-          to="/admin/products/add" 
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
-        >
-          <FaPlus className="mr-2" /> Add New Product
-        </Link>
+        <div className="flex space-x-4">
+          <Link 
+            to="/admin/products/add" 
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
+          >
+            <FaPlus className="mr-2" /> Add New Product
+          </Link>
+          <Link 
+            to="/admin/sales-report" 
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
+          >
+            <FaChartBar className="mr-2" /> View Sales Report
+          </Link>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -93,7 +101,7 @@ const AdminDashboard = () => {
             </div>
             <div className="ml-4">
               <h2 className="text-gray-600 text-sm">Total Sales</h2>
-              <p className="text-2xl font-semibold">${stats.totalSales.toFixed(2)}</p>
+              <p className="text-2xl font-semibold">Rs.{stats.totalSales.toFixed(2)}</p>
             </div>
           </div>
         </div>
@@ -110,8 +118,6 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
-
-     
 
       {/* Recent Orders */}
       <div className="bg-white rounded-lg shadow-md overflow-hidden">
