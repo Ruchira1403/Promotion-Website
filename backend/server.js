@@ -74,7 +74,7 @@ app.get('/health', (req, res) => {
 export default app;
 
 // Connect to MongoDB and start server only if this file is run directly
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'promotion-website') {
     mongoose
       .connect(process.env.MONGODB_URI, {
         useNewUrlParser: true,
