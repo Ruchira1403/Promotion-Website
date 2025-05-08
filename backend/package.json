@@ -1,11 +1,15 @@
 {
-  "name": "backend",
+  "name": "promotion-website",
   "version": "1.0.0",
   "description": "",
   "main": "server.js",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "node server.js",
+    "start": "cd backend && node server.js",
+    "build": "cd backend && npm install",
     "dev": "nodemon server.js",
     "test": "cross-env NODE_ENV=test vitest",
     "test:ui": "vitest --ui",

@@ -76,32 +76,19 @@ export default app;
 // Connect to MongoDB and start server only if this file is run directly
 if (process.env.NODE_ENV !== 'test') {
     mongoose
-      .connect(process.env.MONGODB_URI + '/promotion-website', {
+      .connect(process.env.MONGODB_URI, {
         useNewUrlParser: true,
         useUnifiedTopology: true
       })
       .then(() => {
         console.log("Connected to MongoDB");
+        
+        // Start server after successful connection
+        app.listen(port, () => {
+            console.log(`Server started on PORT: ${port}`);
+        });
       })
       .catch((err) => {
         console.error("Error connecting to MongoDB:", err);
       });
-
-    // Add this before app.listen
-    app._router.stack.forEach(function(r){
-      if (r.route && r.route.path){
-        console.log(`Route registered: ${r.route.stack[0].method.toUpperCase()} ${r.route.path}`);
-      } else if (r.name === 'router' && r.handle.stack) {
-        r.handle.stack.forEach(function(middleware) {
-          if (middleware.route) {
-            const basePath = r.regexp.toString().split('\\')[1];
-            console.log(`Route registered: ${middleware.route.stack[0].method.toUpperCase()} /${basePath}${middleware.route.path}`);
-          }
-        });
-      }
-    });
-
-    app.listen(port, () => {
-        console.log(`Server started on PORT: ${port}`);
-    });
 }
