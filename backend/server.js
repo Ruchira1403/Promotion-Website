@@ -32,7 +32,7 @@ const __dirname = path.dirname(__filename);
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "https://promotion-website.vercel.app",
+  origin: process.env.FRONTEND_URL || "https://promotion-website-frontend.onrender.com",
   credentials: true
 }));
 app.use(express.json());

@@ -51,7 +51,7 @@ const AdminProductForm = () => {
         stock: product.stock.toString(),
       });
       
-      setImagePreview(`http://localhost:4000${product.imageUrl}`);
+      setImagePreview(`https://promotion-website-backend.onrender.com${product.imageUrl}`);
     } catch (err) {
       setError('Failed to load product');
       console.error(err);

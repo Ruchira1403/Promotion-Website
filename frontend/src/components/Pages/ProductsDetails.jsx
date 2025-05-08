@@ -136,7 +136,7 @@ const ProductsDetails = () => {
           {filteredProducts.map((product) => (
             <div key={product._id} className="bg-white rounded-lg shadow-md overflow-hidden">
               <img
-                src={`http://localhost:4000${product.imageUrl}`}
+                src={`https://promotion-website-backend.onrender.com${product.imageUrl}`}
                 alt={product.name}
                 className="w-full h-48 object-cover"
               />

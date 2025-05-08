@@ -119,7 +119,7 @@ const Orders = () => {
                         {item.product && (
                           <>
                             <img
-                              src={`http://localhost:4000${item.product.imageUrl}`}
+                              src={`https://promotion-website-backend.onrender.com${item.product.imageUrl}`}
                               alt={item.product.name}
                               className="h-16 w-16 object-cover rounded"
                             />

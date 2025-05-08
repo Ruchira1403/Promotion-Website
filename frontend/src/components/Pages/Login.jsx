@@ -53,7 +53,7 @@ const Login = () => {
   };
 
   const handleSocialLogin = (provider) => {
-    window.location.href = `http://localhost:4000/api/auth/${provider}`;
+    window.location.href = `https://promotion-website-backend.onrender.com/api/auth/${provider}`;
   };
 
   return (

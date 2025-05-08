@@ -121,11 +121,11 @@ const ContactUs = () => {
 
       <div className="mt-8 text-center px-4">
         <h2 className="text-lg font-semibold">Head Office</h2>
-        <p className="text-gray-700">Island Dairies (Pvt) Ltd.</p>
+        <p className="text-gray-700">Wishwa Diary (Pvt) Ltd.</p>
         <p className="text-gray-700">No. 645, Ranwala, Kegalle, Sri Lanka. 7100.</p>
         <p className="text-gray-700">035 4932424</p>
-        <p className="text-gray-700">islanddairies.info@gmail.com</p>
-        <p className="text-gray-700">islanddairies.ofc@gmail.com</p>
+        <p className="text-gray-700">wishwadiary.info@gmail.com</p>
+        <p className="text-gray-700">wishwadiary.ofc@gmail.com</p>
         
         <div className="mt-4 w-full max-w-md mx-auto">
           <iframe

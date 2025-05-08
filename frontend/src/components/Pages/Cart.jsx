@@ -146,7 +146,7 @@ const Cart = () => {
                       <div className="flex items-center">
                         <img
                           className="h-16 w-16 object-cover rounded"
-                          src={`http://localhost:4000${item.product.imageUrl}`}
+                          src={`https://promotion-website-backend.onrender.com${item.product.imageUrl}`}
                           alt={item.product.name}
                         />
                         <div className="ml-4">

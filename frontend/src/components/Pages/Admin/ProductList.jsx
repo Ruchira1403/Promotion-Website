@@ -121,7 +121,7 @@ const AdminProductList = () => {
                     <div className="h-10 w-10 flex-shrink-0">
                       <img 
                         className="h-10 w-10 rounded-full object-cover" 
-                        src={`http://localhost:4000${product.imageUrl}`} 
+                        src={`https://promotion-website-backend.onrender.com${product.imageUrl}`} 
                         alt={product.name} 
                       />
                     </div>

@@ -191,7 +191,7 @@ const OrderDetail = () => {
                       <div className="flex items-center">
                         {item.product && item.product.imageUrl && (
                           <img 
-                            src={`http://localhost:4000${item.product.imageUrl}`} 
+                            src={`https://promotion-website-backend.onrender.com${item.product.imageUrl}`} 
                             alt={item.product.name} 
                             className="h-10 w-10 object-cover rounded mr-3"
                           />
