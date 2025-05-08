@@ -22,7 +22,7 @@ import Orders from "./components/Pages/Orders";
 import AdminDashboard from "./components/Pages/Admin/Dashboard";
 import AdminProductList from "./components/Pages/Admin/ProductList";
 import AdminProductForm from "./components/Pages/Admin/ProductForm";
-import AdminLayout from "./components/Admin/AdminLayout";
+import AdminLayout from "./components/admin/AdminLayout";
 import AdminRoute from "./components/AdminRoute";
 import SocialAuthCallback from "./components/SocialAuthCallback";
 import Profile from "./components/Pages/Profile";
